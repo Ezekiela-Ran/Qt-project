@@ -1,0 +1,83 @@
+Help on package PySide6:
+
+NNAAMMEE
+    PySide6
+
+PPAACCKKAAGGEE  CCOONNTTEENNTTSS
+    Qt3DAnimation
+    Qt3DCore
+    Qt3DExtras
+    Qt3DInput
+    Qt3DLogic
+    Qt3DRender
+    QtAsyncio (package)
+    QtBluetooth
+    QtCharts
+    QtConcurrent
+    QtCore
+    QtDBus
+    QtDataVisualization
+    QtDesigner
+    QtGraphs
+    QtGraphsWidgets
+    QtGui
+    QtHelp
+    QtHttpServer
+    QtLocation
+    QtMultimedia
+    QtMultimediaWidgets
+    QtNetwork
+    QtNetworkAuth
+    QtNfc
+    QtOpenGL
+    QtOpenGLWidgets
+    QtPdf
+    QtPdfWidgets
+    QtPositioning
+    QtPrintSupport
+    QtQml
+    QtQuick
+    QtQuick3D
+    QtQuickControls2
+    QtQuickTest
+    QtQuickWidgets
+    QtRemoteObjects
+    QtScxml
+    QtSensors
+    QtSerialBus
+    QtSerialPort
+    QtSpatialAudio
+    QtSql
+    QtStateMachine
+    QtSvg
+    QtSvgWidgets
+    QtTest
+    QtTextToSpeech
+    QtUiTools
+    QtWebChannel
+    QtWebEngineCore
+    QtWebEngineQuick
+    QtWebEngineWidgets
+    QtWebSockets
+    QtWebView
+    QtWidgets
+    QtXml
+    _config
+    _git_pyside_version
+    scripts (package)
+    support (package)
+
+FFUUNNCCTTIIOONNSS
+    ____ggeettaattttrr____(name: str) -> list[str]
+        # Provide the __all__ variable only on access.
+
+DDAATTAA
+    ____pprree__aallll____ = ['QtCore', 'QtGui', 'QtWidgets', 'QtPrintSupport', 'QtSq...
+    ____vveerrssiioonn__iinnffoo____ = (6, 10, 2, '', '')
+
+VVEERRSSIIOONN
+    6.10.2
+
+FFIILLEE
+    /home/sambatra/.pyenv/versions/3.12.4/lib/python3.12/site-packages/PySide6/__init__.py
+
