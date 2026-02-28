@@ -5,16 +5,28 @@ class MenuBar(QtWidgets.QMenuBar):
     def __init__(self, parent):
         super().__init__(parent)
         
+        self._initialise_file_menu()
+        self._initialise_theme_menu()
+        
+    def _initialise_file_menu(self):
+        
         # Menu pour les fichiers
-        self.file_menu = self.addMenu("Fichier")
-        self.new_file_menu = QtWidgets.QMenu("Nouveau")
-        self.file_menu.addMenu(self.new_file_menu)
-        self.new_file_menu.addAction("Facture")
-        self.new_file_menu.addAction("Facture proforma")
+        file_menu = self.addMenu("Fichier")
+        
+        # Sous-menu pour les nouveaux fichiers
+        new_file_sub_menu = QtWidgets.QMenu("Nouveau")
+        file_menu.addMenu(new_file_sub_menu)
+        
+        # Actions pour les nouveaux fichiers
+        new_file_sub_menu.addAction("Facture")
+        new_file_sub_menu.addAction("Facture proforma")
+        
+    def _initialise_theme_menu(self):
         
         # Menu pour les thèmes
-        self.theme_menu = self.addMenu("Thème")
-        self.theme_menu.addAction("Clair")
-        self.theme_menu.addAction("Sombre")
+        theme_menu = self.addMenu("Thème")
         
+        # Actions pour les thèmes
+        theme_menu.addAction("Clair")
+        theme_menu.addAction("Sombre")
         
