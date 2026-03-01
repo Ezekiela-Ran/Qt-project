@@ -11,10 +11,12 @@ if __name__ == "__main__":
     
     app = QtWidgets.QApplication([])
 
-    win = Window()
+    main_layout = MainLayout()
+    
+    win = Window(main_layout)
     
     MenuBar(win)
-    main_layout = MainLayout()
+    
     win.setLayout(main_layout)
     
     win.show()

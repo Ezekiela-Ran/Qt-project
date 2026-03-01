@@ -1,4 +1,5 @@
+from views.foundation.templates.invoices.form import FormTemplate
 
-class StandardInvoiceForm:
+class StandardInvoiceForm(FormTemplate):
     def __init__(self):
-        pass
+        super().__init__()

@@ -2,12 +2,18 @@ from PySide6 import QtWidgets
 
 class MenuBar(QtWidgets.QMenuBar):
     def __init__(self, parent):
-        super().__init__(parent)
+        super().__init__(parent)       
+        
+        self.parent = parent
+        
         # Menu pour les fichiers
         self.file_menu = self.addMenu("Fichier")
         self.new_file_menu = QtWidgets.QMenu("Nouveau")
         self.file_menu.addMenu(self.new_file_menu)
         self.new_file_menu.addAction("Facture")
+        
+        self.new_file_menu.triggered.connect(lambda: self.parent.main_layout.show_standard_invoice_form())
+        
         self.new_file_menu.addAction("Facture proforma")
         
         # Menu pour les thèmes
@@ -17,7 +23,7 @@ class MenuBar(QtWidgets.QMenuBar):
         self._apply_styles()
     
     def _apply_styles(self): 
-        with open("styles/menu.qss", "r") as f: 
+        with open("styles/menu.qss", "r") as f:
             self.setStyleSheet(f.read())
         
         
