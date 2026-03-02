@@ -7,7 +7,6 @@ class MainLayout(QtWidgets.QWidget):
         self.layout = QtWidgets.QVBoxLayout(self)
         self.head_layout = HeadLayout(self)
         self.body_layout = BodyLayout(self)
-
         self.layout.addWidget(self.head_layout,stretch=1)
         self.layout.addWidget(self.body_layout,stretch=1)
 

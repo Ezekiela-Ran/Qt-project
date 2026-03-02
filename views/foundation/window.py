@@ -15,4 +15,5 @@ class Window(QtWidgets.QWidget):
         self.setWindowTitle("Acssqda")
         self.setGeometry(0, 0, width, height)
         self.window_layout = QtWidgets.QVBoxLayout(self)
-        
+        self.window_layout.setContentsMargins(0, 0, 0, 0)
+        # self.window_layout.setSpacing(0)
