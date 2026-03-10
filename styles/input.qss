@@ -1,5 +1,6 @@
 QLineEdit {
     font-family: "Comic Sans MS";
+    font-size: 18px;
     margin: 2px;
     padding: 0px;              
     color: #032429;            
