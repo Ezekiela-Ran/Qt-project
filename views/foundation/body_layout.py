@@ -12,9 +12,15 @@ class BodyLayout(QtWidgets.QWidget):
         self.body_layout = QtWidgets.QVBoxLayout(self)
         
 
-        self.form = StandardInvoiceProductType()
-        self.form.setMaximumWidth(300)
-        self.record = StandardInvoiceProducts()
+        self.product_type = StandardInvoiceProductType()
+        self.product_type.setObjectName("productType")
+        self.product_type.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
 
-        self.body_layout.addWidget(self.form, 1)
-        self.body_layout.addWidget(self.record, 1)
+        self.product_type.setMaximumWidth(400)
+        self.products = StandardInvoiceProducts()
+
+        self.body_layout.addWidget(self.product_type, 1)
+        self.body_layout.addWidget(self.products, 1)
+
+        with open("styles/product_type.qss", "r") as f:
+            self.setStyleSheet(f.read())

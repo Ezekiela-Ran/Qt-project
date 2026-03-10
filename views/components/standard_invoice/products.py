@@ -1,5 +1,5 @@
-from views.foundation.templates.products import Products
+from views.foundation.templates.products import ProductsTemplate
 
-class StandardInvoiceProducts(Products):
+class StandardInvoiceProducts(ProductsTemplate):
     def __init__(self):
         super().__init__()
