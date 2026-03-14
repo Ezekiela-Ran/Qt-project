@@ -25,8 +25,6 @@ if __name__ == "__main__":
     main_layout = MainLayout(win)
     
     win.window_layout.addWidget(main_layout)
-
-    # win.setLayout(main_layout.head)
     
     win.show()
     

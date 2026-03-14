@@ -1,29 +1,41 @@
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QListWidgetItem
 )
+from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt
 
 class ProductTypeTemplate(QWidget):
     def __init__(self):
         super().__init__()
 
+        # Widgets
         self.product_type_label = QLabel("Type de produit")
-        self.product_label = QLabel("Type de")
-        self.produc_label = QLabel("Type de")
-        self.produ_label = QLabel("Type de")
-        self.prod_label = QLabel("Type de")
-        self.pro_label = QLabel("Type de")
-        self.pr_label = QLabel("Type de")
-        self.p_label = QLabel("Type de")
+        self.product_type_button = QPushButton("Ajouter")
 
-        layout = QVBoxLayout(self)
+        # Layout horizontal pour l'en-tête
+        product_type_head = QHBoxLayout()
+        product_type_head.addWidget(self.product_type_label)
+        product_type_head.addWidget(self.product_type_button)
 
-        layout.addWidget(self.product_type_label)
-        layout.addWidget(self.product_label)
-        layout.addWidget(self.produc_label)
-        layout.addWidget(self.produ_label)
-        layout.addWidget(self.prod_label)
-        layout.addWidget(self.pro_label)
-        layout.addWidget(self.pr_label)
-        layout.addWidget(self.p_label)
+        # Layout vertical principal
+        product_type_list = QVBoxLayout()
+        product_type_list.addLayout(product_type_head)
 
-        self.setLayout(layout)
+        # Création de la liste
+        self.listWidget = QListWidget(self)
+        self.listWidget.setObjectName("listWidget")
+
+        # Définition de la police
+        font = QFont("MS Gothic", weight=QFont.Bold)
+
+        # Ajout d'un élément centré
+        item = QListWidgetItem("Confiserie")
+        item.setTextAlignment(Qt.AlignCenter)
+        item.setFont(font)
+        self.listWidget.addItem(item)
+
+        # Ajout de la liste dans le layout principal
+        product_type_list.addWidget(self.listWidget)
+
+        # Associer le layout principal au widget
+        self.setLayout(product_type_list)

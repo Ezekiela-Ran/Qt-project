@@ -8,7 +8,7 @@ class StandardInvoiceRecord(QtWidgets.QWidget):
         super().__init__()
         self.setObjectName("card")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
-        List_record = ListRecordTemplate(self.standardinvoice.headers,self.standardinvoice.data)
+        List_record = ListRecordTemplate(self.standardinvoice.headers, self.standardinvoice.data)
         layout = QtWidgets.QHBoxLayout(self)
         layout.addWidget(List_record)
 
