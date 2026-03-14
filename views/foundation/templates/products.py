@@ -26,7 +26,7 @@ class ProductsTemplate(QWidget):
         ])
 
         # Produits initiaux
-        produits = ["Produit A", "Produit B", "Produit C"]
+        produits = []
         self.table.setRowCount(len(produits))
         for row, produit in enumerate(produits):
             self.add_row(row, produit)
