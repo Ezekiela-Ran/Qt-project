@@ -1,4 +1,5 @@
+from views.foundation.templates.product_type import ProductTypeTemplate
 
-class ProformaInvoiceProductType:
+class ProformaInvoiceProductType(ProductTypeTemplate):
     def __init__(self):
-        pass
+        super().__init__()

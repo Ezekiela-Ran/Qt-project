@@ -1,4 +1,6 @@
+from views.foundation.templates.products import ProductsTemplate
+from PySide6 import QtWidgets,QtCore
 
-class ProformaProducts:
+class ProformaInvoiceProducts(ProductsTemplate):
     def __init__(self):
-        pass
+        super().__init__()

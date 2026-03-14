@@ -21,13 +21,16 @@ class MainLayout(QWidget):
         self.head_layout = HeadLayout(self)
         self.head_layout.setMaximumHeight(200)
 
-        if invoice_type == "standard":
-            self.head_layout.standard_invoice()
-        elif invoice_type == "proforma":
-            self.head_layout.proforma_invoice()
-
         # Body layout
         self.body_layout = BodyLayout(self)
+
+        if invoice_type == "standard":
+            self.head_layout.standard_invoice()
+            self.body_layout.standard_invoice()
+        elif invoice_type == "proforma":
+            self.head_layout.proforma_invoice()
+            self.body_layout.proforma_invoice()
+
 
         # Ajout au layout principal
         for widget, stretch in [(self.head_layout, 1), (self.body_layout, 1)]:
