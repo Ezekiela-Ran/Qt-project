@@ -10,7 +10,9 @@ class InvoicesModel:
         """
         conn = connection()
         cursor = conn.cursor(dictionary=True)
+        cursor.execute("USE invoicing")
         cursor.execute(f"SELECT * FROM {cls.table_name}")
+
         
         data = cursor.fetchall()
         conn.close()

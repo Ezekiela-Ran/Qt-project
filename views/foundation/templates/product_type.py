@@ -1,9 +1,10 @@
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QInputDialog,QListWidgetItem
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QInputDialog, QListWidgetItem
 )
 from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt
 from models.product_type_model import ProductTypeModel
+
 class ProductTypeTemplate(QWidget):
     def __init__(self):
         super().__init__()
@@ -30,8 +31,8 @@ class ProductTypeTemplate(QWidget):
         # Définition de la police
         self.font = QFont("MS Gothic", weight=QFont.Bold)
 
-        # Liste des items à ajouter
-        items = []
+        # Récupération des items depuis la base
+        items = self.get_item_from_database()
 
         # Boucle pour ajouter les items
         for text in items:
@@ -46,6 +47,12 @@ class ProductTypeTemplate(QWidget):
         # Connexion des boutons
         self.product_type_add_button.clicked.connect(self.on_add_item)
         self.product_type_delete_button.clicked.connect(self.on_delete_item)
+
+    def get_item_from_database(self):
+        """Retourne la liste des noms de type de produit depuis la base."""
+        product_types = ProductTypeModel.get_all()
+        
+        return [pt["product_type_name"] for pt in product_types]
 
     def add_item(self, text: str):
         """Ajoute un item formaté dans la liste."""
