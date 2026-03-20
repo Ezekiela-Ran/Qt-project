@@ -1,4 +1,5 @@
-from models.invoices_model import InvoicesModel
+from models.database_management import DatabaseManagement
 
-class ProductsModel(InvoicesModel):
+class ProductsModel(DatabaseManagement):
     table_name = "products"
+    name_column = "product_name"

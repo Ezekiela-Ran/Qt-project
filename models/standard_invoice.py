@@ -1,6 +1,6 @@
-from models.invoices_model import InvoicesModel
+from models.database_management import DatabaseManagement
 
-class StandardInvoice(InvoicesModel):
+class StandardInvoice(DatabaseManagement):
     table_name = "standard_invoice"
     headers = ["Raison sociale","Adresse","Date d'émission","Date de resultat","réference produit","Responsable"]
     data = []

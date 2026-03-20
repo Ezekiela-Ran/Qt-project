@@ -1,4 +1,4 @@
-from models.invoices_model import InvoicesModel
-class ProductTypeModel(InvoicesModel):
+from models.database_management import DatabaseManagement
+class ProductTypeModel(DatabaseManagement):
     table_name ="product_type"
     

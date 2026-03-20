@@ -1,91 +1,57 @@
-from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QInputDialog, QListWidgetItem
-)
-from PySide6.QtGui import QFont
-from PySide6.QtCore import Qt
-from models.product_type_model import ProductTypeModel
 
-class ProductTypeTemplate(QWidget):
-    def __init__(self):
-        super().__init__()
+    #     # Remplir la liste
+    #     self.populate_list()
 
-        # Widgets
-        self.product_type_label = QLabel("Type de produit")
-        self.product_type_delete_button = QPushButton("Supprimer")
-        self.product_type_add_button = QPushButton("Ajouter")
+    #     product_type_list.addWidget(self.type_list)
+    #     self.setLayout(product_type_list)
 
-        # Layout horizontal pour l'en-tête
-        product_type_head = QHBoxLayout()
-        product_type_head.addWidget(self.product_type_label)
-        product_type_head.addWidget(self.product_type_delete_button)
-        product_type_head.addWidget(self.product_type_add_button)
+    #     # Connexions
+    #     self.add_btn.clicked.connect(self.on_add_item)
+    #     self.del_btn.clicked.connect(self.on_delete_item)
 
-        # Layout vertical principal
-        product_type_list = QVBoxLayout()
-        product_type_list.addLayout(product_type_head)
-
-        # Création de la liste
-        self.listWidget = QListWidget(self)
-        self.listWidget.setObjectName("listWidget")
-
-        # Définition de la police
-        self.font = QFont("MS Gothic", weight=QFont.Bold)
-
-        # Récupération des items depuis la base
-        items = self.get_item_from_database()
-
-        # Boucle pour ajouter les items
-        for text in items:
-            self.add_item(text)
-
-        # Ajout de la liste dans le layout principal
-        product_type_list.addWidget(self.listWidget)
-
-        # Associer le layout principal au widget
-        self.setLayout(product_type_list)
-
-        # Connexion des boutons
-        self.product_type_add_button.clicked.connect(self.on_add_item)
-        self.product_type_delete_button.clicked.connect(self.on_delete_item)
-
-    def get_item_from_database(self):
-        """Retourne la liste des noms de type de produit depuis la base."""
-        product_types = ProductTypeModel.get_all()
+    #     self.type_list.itemClicked.connect(self.on_item_clicked)
         
-        return [pt["product_type_name"] for pt in product_types]
 
-    def add_item(self, text: str):
-        """Ajoute un item formaté dans la liste."""
-        item = QListWidgetItem(text)
-        item.setTextAlignment(Qt.AlignCenter)
-        item.setFont(self.font)
-        self.listWidget.addItem(item)
+    # def populate_list(self):
+    #     """Charge les items depuis la base et les ajoute à la liste."""
+    #     for pt in ProductTypeModel.get_all():
+    #         self.add_item(pt["product_type_name"])
 
-    def on_add_item(self):
-        """Demande un texte à l’utilisateur et ajoute l’item."""
-        text, ok = QInputDialog.getText(self, "Nouvel item", "Nom du produit :")
-        if ok and text.strip():
-            self.add_item(text.strip())
-            ProductTypeModel.insert({
-                "product_type_name": text
-            })
+    # def get_product_type_id(self, item: QListWidgetItem):
+    #     """Retourne l'id correspondant au nom de produit."""
+    #     row = ProductTypeModel.fetch_row("id", "product_type_name", item.text())
+    #     if row:  # row est un dict, ex: {"id": 3}
+    #         return row["id"]
+    #     return None
 
-    def delete_item_from_database(self, product_type_name: str):
-        """Supprime un type de produit de la base."""
-        ProductTypeModel.delete({
-            "product_type_name": product_type_name
-        })
+    # def add_item(self, text: str):
+    #     """Ajoute un item formaté dans la liste."""
+    #     item = QListWidgetItem(text)
+    #     item.setTextAlignment(Qt.AlignCenter)
+    #     item.setFont(self.font)
+    #     self.type_list.addItem(item)
 
-    def on_delete_item(self):
-        """Supprime l’item sélectionné dans la liste et dans la base."""
-        selected_items = self.listWidget.selectedItems()
-        if not selected_items:
-            return  # Rien de sélectionné
+    # def on_add_item(self):
+    #     """Demande un texte à l’utilisateur et ajoute l’item."""
+    #     text, ok = QInputDialog.getText(self, "Nouvel item", "Nom du produit :")
+    #     if ok and text.strip():
+    #         self.add_item(text.strip())
+    #         ProductTypeModel.insert({"product_type_name": text.strip()})
 
-        for item in selected_items:
-            text = item.text()
-            # Supprimer de la base
-            self.delete_item_from_database(text)
-            # Supprimer de la liste
-            self.listWidget.takeItem(self.listWidget.row(item))
+    # def on_delete_item(self):
+    #     """Supprime l’item sélectionné dans la liste et dans la base."""
+    #     for item in self.type_list.selectedItems():
+    #         ProductTypeModel.delete({"product_type_name": item.text()})
+    #         self.type_list.takeItem(self.type_list.row(item))
 
+    # # Exemple : depuis ProductTypeTemplate
+    # def on_item_clicked(self, item: QListWidgetItem):
+    #     product_type_id = self.get_product_type_id(item)
+    #     self.selected_product_type_id = product_type_id
+    #     print(f"Item cliqué : {product_type_id}")
+
+    #     # Créer ProductsTemplate avec l’ID
+    #     ProductsTemplate(product_type_id=product_type_id)
+
+
+        

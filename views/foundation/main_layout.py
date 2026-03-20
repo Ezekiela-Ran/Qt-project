@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout
 from views.foundation.head_layout import HeadLayout
 from views.foundation.body_layout import BodyLayout
 from views.components.menu_bar import MenuBar
+from views.foundation.globals import GlobalVariable
 
 class MainLayout(QWidget):
     def __init__(self, parent):
@@ -26,10 +27,10 @@ class MainLayout(QWidget):
 
         if invoice_type == "standard":
             self.head_layout.standard_invoice()
-            self.body_layout.standard_invoice()
+            GlobalVariable.invoice_type = "standard"
         elif invoice_type == "proforma":
             self.head_layout.proforma_invoice()
-            self.body_layout.proforma_invoice()
+            GlobalVariable.invoice_type = "proforma"
 
 
         # Ajout au layout principal
