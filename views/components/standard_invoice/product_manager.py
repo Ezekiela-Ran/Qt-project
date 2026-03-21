@@ -113,6 +113,11 @@ class ProductManager(QWidget):
         self.product_table.setCellWidget(row, 5, micro_edit)
         self.product_table.setCellWidget(row, 6, subtotal_edit)
 
+        # Connect automatic recalculation et mise à jour DB sur modification des champs relevant du calcul.
+        physico_edit.textChanged.connect(lambda _: self.on_price_component_changed(row))
+        toxico_edit.textChanged.connect(lambda _: self.on_price_component_changed(row))
+        micro_edit.textChanged.connect(lambda _: self.on_price_component_changed(row))
+
         btn_del = QPushButton("Suppr")
         btn_mod = QPushButton("Modifier")
         btn_sel = QPushButton("Select")
@@ -134,24 +139,60 @@ class ProductManager(QWidget):
         widget = self.product_table.cellWidget(row, 1)
         btn = self.product_table.cellWidget(row, 8)
         if widget.isReadOnly():
-            # Start edit
+            # Start edit (subtotal reste non modifiable)
             btn.setText("Sauver")
-            for col in [1, 2, 3, 4, 5, 6]:
+            for col in [1, 2, 3, 4, 5]:
                 self.product_table.cellWidget(row, col).setReadOnly(False)
             self.product_table.cellWidget(row, 1).setFocus()
         else:
             # Save edit
             btn.setText("Modifier")
-            pid = self.product_table.item(row, 0).data(Qt.UserRole)
-            ref = self.product_table.cellWidget(row, 1).text()
-            num_act = self.product_table.cellWidget(row, 2).text()
-            physico = self.product_table.cellWidget(row, 3).text()
-            toxico = self.product_table.cellWidget(row, 4).text()
-            micro = self.product_table.cellWidget(row, 5).text()
-            subtotal = self.product_table.cellWidget(row, 6).text()
-            self.db.update_product(pid, ref, num_act, physico, toxico, micro, subtotal)
-            for col in [1, 2, 3, 4, 5, 6]:
+            self.on_price_component_changed(row)
+            for col in [1, 2, 3, 4, 5]:
                 self.product_table.cellWidget(row, col).setReadOnly(True)
+
+    def format_number(self, value):
+        if value is None:
+            return "0"
+        try:
+            v = float(value)
+        except ValueError:
+            return "0"
+        if v.is_integer():
+            return str(int(v))
+        return str(v)
+
+    def parse_number(self, value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def on_price_component_changed(self, row):
+        physico_widget = self.product_table.cellWidget(row, 3)
+        toxico_widget = self.product_table.cellWidget(row, 4)
+        micro_widget = self.product_table.cellWidget(row, 5)
+        subtotal_widget = self.product_table.cellWidget(row, 6)
+
+        physico = self.parse_number(physico_widget.text())
+        toxico = self.parse_number(toxico_widget.text())
+        micro = self.parse_number(micro_widget.text())
+
+        subtotal_value = physico + toxico + micro
+        subtotal_text = self.format_number(subtotal_value)
+
+        subtotal_widget.setText(subtotal_text)
+
+        # Mise à jour immédiate dans la base et interface
+        pid = self.product_table.item(row, 0).data(Qt.UserRole)
+        ref = self.product_table.cellWidget(row, 1).text()
+        num_act = self.product_table.cellWidget(row, 2).text()
+
+        self.db.update_product(pid, ref, num_act,
+                               self.format_number(physico),
+                               self.format_number(toxico),
+                               self.format_number(micro),
+                               subtotal_text)
 
     def toggle_select(self, pid, row):
         btn = self.product_table.cellWidget(row, 9)
