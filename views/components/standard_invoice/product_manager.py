@@ -35,7 +35,6 @@ class ProductManager(QWidget):
         main_layout.addLayout(product_list_layout, 3)
 
         self.add_product_btn = QPushButton("Ajouter")
-        self.del_product_btn = QPushButton("Supprimer")
         self.save_btn = QPushButton("Enregistrer")
 
         self.product_table = QTableWidget()
@@ -44,7 +43,6 @@ class ProductManager(QWidget):
         self.product_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
 
         product_list_layout.addWidget(self.add_product_btn)
-        product_list_layout.addWidget(self.del_product_btn)
         product_list_layout.addWidget(self.product_table)
         product_list_layout.addWidget(self.save_btn)
 
@@ -54,7 +52,6 @@ class ProductManager(QWidget):
         self.add_type_btn.clicked.connect(self.add_type)
         self.del_type_btn.clicked.connect(self.del_type)
         self.add_product_btn.clicked.connect(self.add_product)
-        self.del_product_btn.clicked.connect(self.del_product)
         self.save_btn.clicked.connect(self.save_products)
         self.type_list.itemSelectionChanged.connect(self.load_products)
 
@@ -185,13 +182,8 @@ class ProductManager(QWidget):
             widget = self.product_table.cellWidget(row, col)
             widget.setStyleSheet("")
 
-    def del_product(self):
-        row = self.product_table.currentRow()
-        if row >= 0:
-            item = self.product_table.item(row, 0)
-            pid = item.data(Qt.UserRole)
-            self.db.delete_product(pid)
-            self.product_table.removeRow(row)
+    # Le bouton de suppression global de la liste de produits a été supprimé de l'UI.
+    # La suppression se fait via le bouton "Suppr" de chaque ligne dans la table.
 
     def save_products(self):
         # Envoyer uniquement les produits sélectionnés

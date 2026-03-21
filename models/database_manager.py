@@ -51,6 +51,10 @@ class DatabaseManager(Tables):
         )
         self.conn.commit()
         return self.cursor.lastrowid
+
+    def delete_product(self, product_id):
+        self.cursor.execute("DELETE FROM products WHERE id=%s", (product_id,))
+        self.conn.commit()
     
     def update_product(self, product_id, ref, num_act, physico, toxico, micro, subtotal):
         self.cursor.execute(
