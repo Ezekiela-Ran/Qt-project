@@ -47,8 +47,12 @@ class ProductManager(QWidget):
         self.add_product_btn.setStyleSheet(button_style)
 
         self.product_table = QTableWidget()
-        self.product_table.setColumnCount(10)
-        self.product_table.setHorizontalHeaderLabels(["Désignation", "Ref.b.analyse", "N°Acte", "Physico", "Toxico", "Micro", "Sous total", "Suppr", "Modif", "Select"])
+        if self.invoice_type == "proforma":
+            self.product_table.setColumnCount(9)
+            self.product_table.setHorizontalHeaderLabels(["Désignation", "N°Acte", "Physico", "Toxico", "Micro", "Sous total", "Suppr", "Modif", "Select"])
+        else:
+            self.product_table.setColumnCount(10)
+            self.product_table.setHorizontalHeaderLabels(["Désignation", "Ref.b.analyse", "N°Acte", "Physico", "Toxico", "Micro", "Sous total", "Suppr", "Modif", "Select"])
         self.product_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
 
         add_button_layout = QHBoxLayout()
@@ -121,11 +125,12 @@ class ProductManager(QWidget):
         self.product_table.setItem(row, 0, QTableWidgetItem(name))
         self.product_table.item(row, 0).setData(Qt.UserRole, pid)
 
-        ref_edit = QLineEdit(str(ref))
-        if self.invoice_type == "proforma":
-            ref_edit.setReadOnly(True)
-        else:
-            ref_edit.setReadOnly(True)  # Will be editable in edit mode
+        col_offset = 0 if self.invoice_type == "standard" else -1
+
+        if self.invoice_type == "standard":
+            ref_edit = QLineEdit(str(ref)); ref_edit.setReadOnly(True)
+            self.product_table.setCellWidget(row, 1, ref_edit)
+
         num_act_edit = QLineEdit(str(num_act)); num_act_edit.setReadOnly(True)
         physico_edit = QLineEdit(str(physico)); physico_edit.setReadOnly(True)
         micro_edit = QLineEdit(str(micro)); micro_edit.setReadOnly(True)
@@ -137,16 +142,16 @@ class ProductManager(QWidget):
         physico_edit.setValidator(int_validator)
         toxico_edit.setValidator(int_validator)
         micro_edit.setValidator(int_validator)
-        ref_edit.setValidator(int_validator)
+        if self.invoice_type == "standard":
+            ref_edit.setValidator(int_validator)
         num_act_edit.setValidator(int_validator)
         subtotal_edit.setValidator(int_validator)
 
-        self.product_table.setCellWidget(row, 1, ref_edit)
-        self.product_table.setCellWidget(row, 2, num_act_edit)
-        self.product_table.setCellWidget(row, 3, physico_edit)
-        self.product_table.setCellWidget(row, 4, toxico_edit)
-        self.product_table.setCellWidget(row, 5, micro_edit)
-        self.product_table.setCellWidget(row, 6, subtotal_edit)
+        self.product_table.setCellWidget(row, 1 + col_offset, num_act_edit)
+        self.product_table.setCellWidget(row, 2 + col_offset, physico_edit)
+        self.product_table.setCellWidget(row, 3 + col_offset, toxico_edit)
+        self.product_table.setCellWidget(row, 4 + col_offset, micro_edit)
+        self.product_table.setCellWidget(row, 5 + col_offset, subtotal_edit)
 
         # Connect automatic recalculation et mise à jour DB sur modification des champs relevant du calcul.
         physico_edit.textChanged.connect(lambda _: self.on_price_component_changed(row))
@@ -163,9 +168,19 @@ class ProductManager(QWidget):
         btn_mod.setStyleSheet(row_button_style)
         btn_sel.setStyleSheet(row_button_style)
 
-        self.product_table.setCellWidget(row, 7, btn_del)
-        self.product_table.setCellWidget(row, 8, btn_mod)
-        self.product_table.setCellWidget(row, 9, btn_sel)
+        # Positions des boutons selon le type
+        if self.invoice_type == "standard":
+            btn_del_col = 7
+            btn_mod_col = 8
+            btn_sel_col = 9
+        else:  # proforma
+            btn_del_col = 6
+            btn_mod_col = 7
+            btn_sel_col = 8
+
+        self.product_table.setCellWidget(row, btn_del_col, btn_del)
+        self.product_table.setCellWidget(row, btn_mod_col, btn_mod)
+        self.product_table.setCellWidget(row, btn_sel_col, btn_sel)
 
         btn_del.clicked.connect(lambda: self.db.delete_product(pid) or self.product_table.removeRow(row))
         btn_mod.clicked.connect(lambda: self.toggle_edit(row))
@@ -177,21 +192,25 @@ class ProductManager(QWidget):
             self.apply_selection_style(row)
 
     def toggle_edit(self, row):
-        widget = self.product_table.cellWidget(row, 1)
-        btn = self.product_table.cellWidget(row, 8)
+        col_offset = 0 if self.invoice_type == "standard" else -1
+        widget = self.product_table.cellWidget(row, 1 + col_offset)
+        btn_col = 8 if self.invoice_type == "standard" else 7
+        btn = self.product_table.cellWidget(row, btn_col)
         if widget.isReadOnly():
             # Start edit (subtotal reste non modifiable)
             btn.setText("Sauver")
-            editable_cols = [1, 2, 3, 4, 5] if self.invoice_type == "standard" else [2, 3, 4, 5]
+            editable_cols = [1, 2, 3, 4, 5] if self.invoice_type == "standard" else [1, 2, 3, 4]
+            editable_cols = [c + col_offset for c in editable_cols]
             for col in editable_cols:
                 self.product_table.cellWidget(row, col).setReadOnly(False)
-            focus_col = 1 if self.invoice_type == "standard" else 2
+            focus_col = 1 + col_offset
             self.product_table.cellWidget(row, focus_col).setFocus()
         else:
             # Save edit
             btn.setText("Modifier")
             self.on_price_component_changed(row)
-            editable_cols = [1, 2, 3, 4, 5] if self.invoice_type == "standard" else [2, 3, 4, 5]
+            editable_cols = [1, 2, 3, 4, 5] if self.invoice_type == "standard" else [1, 2, 3, 4]
+            editable_cols = [c + col_offset for c in editable_cols]
             for col in editable_cols:
                 self.product_table.cellWidget(row, col).setReadOnly(True)
 
@@ -215,10 +234,11 @@ class ProductManager(QWidget):
             return 0.0
 
     def on_price_component_changed(self, row):
-        physico_widget = self.product_table.cellWidget(row, 3)
-        toxico_widget = self.product_table.cellWidget(row, 4)
-        micro_widget = self.product_table.cellWidget(row, 5)
-        subtotal_widget = self.product_table.cellWidget(row, 6)
+        col_offset = 0 if self.invoice_type == "standard" else -1
+        physico_widget = self.product_table.cellWidget(row, 2 + col_offset)
+        toxico_widget = self.product_table.cellWidget(row, 3 + col_offset)
+        micro_widget = self.product_table.cellWidget(row, 4 + col_offset)
+        subtotal_widget = self.product_table.cellWidget(row, 5 + col_offset)
 
         physico = self.parse_number(physico_widget.text())
         toxico = self.parse_number(toxico_widget.text())
@@ -231,8 +251,11 @@ class ProductManager(QWidget):
 
         # Mise à jour immédiate dans la base et interface
         pid = self.product_table.item(row, 0).data(Qt.UserRole)
-        ref = int(self.product_table.cellWidget(row, 1).text() or 0)
-        num_act = self.product_table.cellWidget(row, 2).text()
+        if self.invoice_type == "standard":
+            ref = int(self.product_table.cellWidget(row, 1).text() or 0)
+        else:
+            ref = 0  # Not used for proforma
+        num_act = self.product_table.cellWidget(row, 1 + col_offset).text()
 
         self.db.update_product(pid, ref, num_act,
                                int(physico),
@@ -241,7 +264,8 @@ class ProductManager(QWidget):
                                int(subtotal_value))
 
     def toggle_select(self, pid, row):
-        btn = self.product_table.cellWidget(row, 9)
+        btn_col = 9 if self.invoice_type == "standard" else 8
+        btn = self.product_table.cellWidget(row, btn_col)
         if btn.text() == "Select":
             btn.setText("Annuler")
             self.selected_products[pid] = True
@@ -257,8 +281,10 @@ class ProductManager(QWidget):
             item = self.product_table.item(row, col)
             if item:
                 item.setBackground(Qt.green)
-        for col in [1, 2, 3, 4, 5, 6]:
-            widget = self.product_table.cellWidget(row, col)
+        editable_cols = [1, 2, 3, 4, 5] if self.invoice_type == "standard" else [1, 2, 3, 4]
+        col_offset = 0 if self.invoice_type == "standard" else -1
+        for col in editable_cols:
+            widget = self.product_table.cellWidget(row, col + col_offset)
             widget.setStyleSheet("background-color: lightgreen; border: 1px solid green;")
 
     def clear_selection_style(self, row):
@@ -266,8 +292,10 @@ class ProductManager(QWidget):
             item = self.product_table.item(row, col)
             if item:
                 item.setBackground(Qt.white)
-        for col in [1, 2, 3, 4, 5, 6]:
-            widget = self.product_table.cellWidget(row, col)
+        editable_cols = [1, 2, 3, 4, 5] if self.invoice_type == "standard" else [1, 2, 3, 4]
+        col_offset = 0 if self.invoice_type == "standard" else -1
+        for col in editable_cols:
+            widget = self.product_table.cellWidget(row, col + col_offset)
             widget.setStyleSheet("")
 
     # Le bouton de suppression global de la liste de produits a été supprimé de l'UI.
@@ -316,9 +344,11 @@ class ProductManager(QWidget):
             for row in range(self.product_table.rowCount()):
                 item_pid = self.product_table.item(row, 0).data(Qt.UserRole)
                 if item_pid == pid:
-                    btn = self.product_table.cellWidget(row, 9)
-                    btn.setText("Annuler")
-                    self.apply_selection_style(row)
+                    btn_col = 9 if self.invoice_type == "standard" else 8
+                    btn = self.product_table.cellWidget(row, btn_col)
+                    if btn:
+                        btn.setText("Annuler")
+                        self.apply_selection_style(row)
                     break
         # la sélection ne désactive plus les champs du formulaire client
         return

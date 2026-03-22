@@ -186,7 +186,7 @@ class DatabaseManager(Tables):
     def get_product_by_id(self, product_id):
         cursor = self.conn.cursor(dictionary=True)
         try:
-            cursor.execute("SELECT product_name, physico, micro, toxico, subtotal FROM products WHERE id=%s", (product_id,))
+            cursor.execute("SELECT product_name, ref_b_analyse, physico, micro, toxico, subtotal FROM products WHERE id=%s", (product_id,))
             return cursor.fetchone()
         finally:
             cursor.close()
