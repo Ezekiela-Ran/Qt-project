@@ -1,6 +1,8 @@
 from PySide6 import QtWidgets
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QMarginsF
+from PySide6.QtGui import QTextDocument, QPageSize, QPageLayout
 from PySide6.QtWidgets import QMessageBox
+from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from views.components.standard_invoice.product_manager import ProductManager
 from models.database_manager import DatabaseManager
 
@@ -34,6 +36,10 @@ class BodyLayout(QtWidgets.QWidget):
         self.print_button = QtWidgets.QPushButton("Imprimer")
         self.print_button.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; padding: 10px; border: none; border-radius: 5px; } QPushButton:hover { background-color: #45a049; }")
 
+        # Bouton aperçu
+        self.preview_button = QtWidgets.QPushButton("Aperçu")
+        self.preview_button.setStyleSheet("QPushButton { background-color: #2196F3; color: white; padding: 10px; border: none; border-radius: 5px; } QPushButton:hover { background-color: #1976D2; }")
+
         # Bouton convertir (pour proforma)
         self.convert_button = QtWidgets.QPushButton("Convertir")
         self.convert_button.setStyleSheet("QPushButton { background-color: #FF9800; color: white; padding: 10px; border: none; border-radius: 5px; } QPushButton:hover { background-color: #e68900; }")
@@ -44,6 +50,7 @@ class BodyLayout(QtWidgets.QWidget):
         bottom_layout.addStretch()
         bottom_layout.addWidget(self.save_button)
         bottom_layout.addWidget(self.print_button)
+        bottom_layout.addWidget(self.preview_button)
         if invoice_type == "proforma":
             bottom_layout.addWidget(self.convert_button)
 
@@ -58,6 +65,8 @@ class BodyLayout(QtWidgets.QWidget):
 
         # Connecter le bouton
         self.save_button.clicked.connect(self.save_invoice)
+        self.print_button.clicked.connect(self.print_invoice)
+        self.preview_button.clicked.connect(self.preview_invoice)
         if invoice_type == "proforma":
             self.convert_button.clicked.connect(self.convert_to_standard)
 
@@ -307,6 +316,140 @@ class BodyLayout(QtWidgets.QWidget):
         total_words = self.number_to_words(int(total)) + " ARIARY"
         formatted_total = f"{total:,.2f}".replace(",", " ")
         self.net_a_payer_label.setText(f"Net à payer: {formatted_total} Ariary ({total_words})")
+
+    def generate_invoice_html(self):
+        main_layout = self.parent()
+        if not hasattr(main_layout, 'head_layout') or not hasattr(main_layout.head_layout, 'form'):
+            return ""
+
+        form = main_layout.head_layout.form
+        from views.foundation.globals import GlobalVariable
+
+        invoice_type = GlobalVariable.invoice_type if hasattr(GlobalVariable, 'invoice_type') else 'standard'
+
+        company_name = form.company_name_input.text().strip()
+        responsable = form.responsable_input.text().strip()
+        stat = form.stat_input.text().strip()
+        nif = form.nif_input.text().strip()
+        address = form.address_input.text().strip() if hasattr(form, 'address_input') else ""
+
+        date_issue = ''
+        date_result = ''
+        date = ''
+
+        if invoice_type == 'standard':
+            date_issue = form.date_issue_input.date().toString('yyyy-MM-dd') if hasattr(form, 'date_issue_input') else ''
+            date_result = form.date_result_input.date().toString('yyyy-MM-dd') if hasattr(form, 'date_result_input') else ''
+            title = 'FACTURE'
+        else:
+            date = form.date_input.date().toString('yyyy-MM-dd') if hasattr(form, 'date_input') else ''
+            title = 'FACTURE PROFORMA'
+
+        selected_ids = [pid for pid, sel in self.product_manager.selected_products.items() if sel]
+        products = []
+        for pid in selected_ids:
+            p = self.product_manager.db.get_product_by_id(pid)
+            if p:
+                products.append(p)
+
+        total = self.calculate_total()
+        total_formatted = f"{total:,.2f}".replace(",", " ")
+
+        header = f"<h2>{title}</h2>"
+        if invoice_type == 'standard':
+            header += f"<p><strong>Date émission:</strong> {date_issue} &nbsp;&nbsp; <strong>Date résultat:</strong> {date_result}</p>"
+            header += f"<p><strong>Ref produit:</strong> {form.product_ref_input.text() if hasattr(form, 'product_ref_input') else ''}</p>"
+        else:
+            header += f"<p><strong>Date:</strong> {date}</p>"
+
+        header += f"<p><strong>Client:</strong> {company_name}<br><strong>Responsable:</strong> {responsable}<br><strong>STAT:</strong> {stat}<br><strong>NIF:</strong> {nif}<br><strong>Adresse:</strong> {address}</p>"
+
+        # Table header selon type
+        if invoice_type == 'standard':
+            columns = ['Désignation', 'Ref.b.analyse', 'N°Acte', 'Physico', 'Toxico', 'Micro', 'Sous-total']
+        else:
+            columns = ['Désignation', 'N°Acte', 'Physico', 'Toxico', 'Micro', 'Sous-total']
+
+        table = '<table border="1" cellspacing="0" cellpadding="4" width="100%">'
+        table += '<tr style="font-weight:bold; text-align:center; background:#f0f0f0;">'
+        for col in columns:
+            table += f'<th>{col}</th>'
+        table += '</tr>'
+
+        for prod in products:
+            table += '<tr>'
+            table += f"<td>{prod.get('product_name','')}</td>"
+            if invoice_type == 'standard':
+                table += f"<td>{prod.get('ref_b_analyse','')}</td>"
+            table += f"<td>{prod.get('num_act','')}</td>"
+            table += f"<td>{prod.get('physico','')}</td>"
+            table += f"<td>{prod.get('toxico','')}</td>"
+            table += f"<td>{prod.get('micro','')}</td>"
+            table += f"<td>{prod.get('subtotal','')}</td>"
+            table += '</tr>'
+
+        table += '</table>'
+
+        footer = '<div style="margin-top:20px; font-weight:bold;">'
+        footer += f"<p>Total: {total_formatted} Ariary</p>"
+        footer += '<p>Arrêté la présente facture à la somme de : Ariary</p>'
+        footer += '<p>Mode de paiement: Espèces / Chèque</p>'
+        footer += '<p>Le Client ______________________ Le(a) Caissier(e) ______________________</p>'
+        footer += '</div>'
+
+        html = '<html><head><meta charset="UTF-8"></head><body>'
+        html += '<div style="font-family: Times New Roman, serif; margin: 10px; ">'
+        html += '<h1 style="text-align:center;">AGENCE DE CONTRÔLE DE LA SÉCURITÉ SANITAIRE ET DE LA QUALITÉ DES DENRÉES ALIMENTAIRES</h1>'
+        html += header + table + footer
+        html += '</div></body></html>'
+
+        return html
+
+    def preview_invoice(self):
+        html = self.generate_invoice_html()
+        if not html:
+            QMessageBox.warning(self, 'Aperçu impossible', 'Impossible de générer l’aperçu. Vérifiez les données.')
+            return
+
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setPageLayout(
+            QPageLayout(
+                QPageSize(QPageSize.A4),
+                QPageLayout.Portrait,
+                QMarginsF(12, 12, 12, 12)
+            )
+        )
+
+        def render_preview(p):
+            doc = QTextDocument()
+            doc.setHtml(html)
+            doc.print_(p)
+
+        preview = QPrintPreviewDialog(printer, self)
+        preview.setWindowTitle('Aperçu de la facture')
+        preview.paintRequested.connect(render_preview)
+        preview.exec()
+
+    def print_invoice(self):
+        html = self.generate_invoice_html()
+        if not html:
+            QMessageBox.warning(self, 'Impression impossible', 'Impossible de générer l’impression. Vérifiez les données.')
+            return
+
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setPageLayout(
+            QPageLayout(
+                QPageSize(QPageSize.A4),
+                QPageLayout.Portrait,
+                QMarginsF(12, 12, 12, 12)
+            )
+        )
+
+        dialog = QtWidgets.QPrintDialog(printer, self)
+        if dialog.exec() == QtWidgets.QDialog.Accepted:
+            doc = QTextDocument()
+            doc.setHtml(html)
+            doc.print_(printer)
 
     def _apply_stylesheet(self, path: str):
         """Charge et applique une feuille de style QSS depuis un fichier."""
