@@ -5,7 +5,7 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import QMarginsF
 from PySide6.QtGui import QTextDocument, QPageSize, QPageLayout
 from PySide6.QtWidgets import QMessageBox
-from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
+from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintDialog
 
 from utils.text_utils import TextUtils
 
@@ -261,7 +261,7 @@ class InvoicePrinter:
             )
         )
 
-        dialog = QtWidgets.QPrintDialog(printer, self.parent)
+        dialog = QPrintDialog(printer, self.parent)
         if dialog.exec() == QtWidgets.QDialog.Accepted:
             doc = QTextDocument()
             doc.setDocumentMargin(0)

@@ -3,9 +3,9 @@ from models.proforma_invoice import ProformaInvoice
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import QDate
 class ProformaInvoiceRecord(QtWidgets.QWidget):
-    proformainvoice=ProformaInvoice()
     def __init__(self):
         super().__init__()
+        self.proformainvoice = ProformaInvoice()
         self.setObjectName("card")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
         self.list_record = ListRecordTemplate(self.proformainvoice.headers,self.proformainvoice.data)

@@ -4,9 +4,9 @@ from views.foundation.templates.records import ListRecordTemplate
 from models.standard_invoice import StandardInvoice
 
 class StandardInvoiceRecord(QtWidgets.QWidget):
-    standardinvoice = StandardInvoice()
     def __init__(self):
         super().__init__()
+        self.standardinvoice = StandardInvoice()
         self.setObjectName("card")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
         self.list_record = ListRecordTemplate(self.standardinvoice.headers, self.standardinvoice.data)

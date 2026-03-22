@@ -322,8 +322,12 @@ class ProductManager(QWidget):
             if not item:
                 continue
             pid = item.data(Qt.UserRole)
+            if pid is None:
+                continue
             if self.invoice_type == 'standard':
                 ref_widget = self.product_table.cellWidget(row, 1)
+                if ref_widget is None:
+                    continue
                 if pid in assigned:
                     ref_widget.setText(str(assigned[pid]))
                 else:
@@ -410,7 +414,10 @@ class ProductManager(QWidget):
                 self.selection_order.append(pid)
             # Trouver la ligne et appliquer la sélection UI
             for row in range(self.product_table.rowCount()):
-                item_pid = self.product_table.item(row, 0).data(Qt.UserRole)
+                row_item = self.product_table.item(row, 0)
+                if not row_item:
+                    continue
+                item_pid = row_item.data(Qt.UserRole)
                 if item_pid == pid:
                     btn_col = 9 if self.invoice_type == "standard" else 8
                     btn = self.product_table.cellWidget(row, btn_col)
@@ -462,6 +469,8 @@ class ProductManager(QWidget):
                         # decrement ref for standard invoices
                         if self.invoice_type == "standard":
                             ref_widget = self.product_table.cellWidget(row, 1)
+                            if ref_widget is None:
+                                continue
                             try:
                                 cur = int(ref_widget.text() or 0)
                             except Exception:

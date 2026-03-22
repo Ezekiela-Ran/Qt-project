@@ -14,8 +14,11 @@ def load_styles(app):
 
 
 if __name__ == "__main__":
-    
-    DatabaseManager.create_tables()
+    try:
+        DatabaseManager.create_tables()
+    except Exception as exc:
+        print("Database initialization failed:", exc)
+        sys.exit(1)
 
     app = QtWidgets.QApplication([])
 

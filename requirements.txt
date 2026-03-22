@@ -1,4 +1,5 @@
 autopep8==2.3.2
+mysql-connector-python>=9.0.0
 num2words==0.5.14
 pycodestyle==2.14.0
 PySide6==6.10.2
