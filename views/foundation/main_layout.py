@@ -23,7 +23,7 @@ class MainLayout(QWidget):
         self.head_layout.setMaximumHeight(200)
 
         # Body layout
-        self.body_layout = BodyLayout(self)
+        self.body_layout = BodyLayout(self, invoice_type)
 
         if invoice_type == "standard":
             GlobalVariable.invoice_type = invoice_type

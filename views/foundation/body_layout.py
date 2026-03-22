@@ -5,7 +5,7 @@ from views.components.standard_invoice.product_manager import ProductManager
 from models.database_manager import DatabaseManager
 
 class BodyLayout(QtWidgets.QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, invoice_type="standard"):
         super().__init__(parent)
 
         # Layout principal
@@ -17,7 +17,7 @@ class BodyLayout(QtWidgets.QWidget):
 
         db_manager = DatabaseManager()
         # Gestion des produits:
-        self.product_manager = ProductManager(db_manager)
+        self.product_manager = ProductManager(db_manager, invoice_type)
         self.product_manager.setObjectName("productType")
         self.product_manager.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
@@ -34,12 +34,18 @@ class BodyLayout(QtWidgets.QWidget):
         self.print_button = QtWidgets.QPushButton("Imprimer")
         self.print_button.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; padding: 10px; border: none; border-radius: 5px; } QPushButton:hover { background-color: #45a049; }")
 
+        # Bouton convertir (pour proforma)
+        self.convert_button = QtWidgets.QPushButton("Convertir")
+        self.convert_button.setStyleSheet("QPushButton { background-color: #FF9800; color: white; padding: 10px; border: none; border-radius: 5px; } QPushButton:hover { background-color: #e68900; }")
+
         # Layout pour le total et les boutons
         bottom_layout = QtWidgets.QHBoxLayout()
         bottom_layout.addWidget(self.net_a_payer_label)
         bottom_layout.addStretch()
         bottom_layout.addWidget(self.save_button)
         bottom_layout.addWidget(self.print_button)
+        if invoice_type == "proforma":
+            bottom_layout.addWidget(self.convert_button)
 
         self.body_layout.addWidget(self.product_manager)
         self.body_layout.addLayout(bottom_layout)
@@ -52,6 +58,32 @@ class BodyLayout(QtWidgets.QWidget):
 
         # Connecter le bouton
         self.save_button.clicked.connect(self.save_invoice)
+        if invoice_type == "proforma":
+            self.convert_button.clicked.connect(self.convert_to_standard)
+
+    def convert_to_standard(self):
+        # Récupérer les données actuelles de proforma
+        main_layout = self.parent()
+        if hasattr(main_layout, 'head_layout') and hasattr(main_layout.head_layout, 'form'):
+            proforma_form = main_layout.head_layout.form
+            selected_products = [pid for pid, sel in self.product_manager.selected_products.items() if sel]
+            
+            # Basculer vers standard
+            main_layout.menubar_click_standard()
+            
+            # Pré-remplir le formulaire standard
+            standard_form = main_layout.head_layout.form
+            standard_form.company_name_input.setText(proforma_form.company_name_input.text())
+            standard_form.responsable_input.setText(proforma_form.responsable_input.text())
+            standard_form.stat_input.setText(proforma_form.stat_input.text())
+            standard_form.nif_input.setText(proforma_form.nif_input.text())
+            standard_form.address_input.setText(proforma_form.address_input.text())
+            
+            # Sélectionner les mêmes produits
+            main_layout.body_layout.product_manager.select_products(selected_products)
+            
+            # Mettre à jour le total
+            main_layout.body_layout.update_total_display()
 
         # Chargement du style QSS
         self._apply_stylesheet("styles/product_type.qss")
@@ -112,6 +144,14 @@ class BodyLayout(QtWidgets.QWidget):
             selected_products = [pid for pid, sel in self.product_manager.selected_products.items() if sel]
             if not selected_products:
                 errors.append("Au moins un produit doit être sélectionné")
+            
+            # Validation spécifique pour standard : ref.b.analyse obligatoire
+            from views.foundation.globals import GlobalVariable
+            if GlobalVariable.invoice_type == "standard":
+                for pid in selected_products:
+                    product = self.product_manager.db.get_product_by_id(pid)
+                    if not product or not product.get('ref_b_analyse') or str(product['ref_b_analyse']).strip() == "":
+                        errors.append(f"Le champ 'Ref.b.analyse' est obligatoire pour le produit {product['product_name'] if product else 'inconnu'}")
             
             if errors:
                 msg = QMessageBox()

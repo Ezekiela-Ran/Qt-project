@@ -8,10 +8,11 @@ from PySide6.QtCore import Qt, Signal
 class ProductManager(QWidget):
     selection_changed = Signal()  # Signal émis quand la sélection change
     
-    def __init__(self, db_manager):
+    def __init__(self, db_manager, invoice_type="standard"):
         super().__init__()
         
         self.db = db_manager
+        self.invoice_type = invoice_type
         self.selected_products = {}  # dictionnaire {pid: True/False}
 
 
@@ -120,7 +121,11 @@ class ProductManager(QWidget):
         self.product_table.setItem(row, 0, QTableWidgetItem(name))
         self.product_table.item(row, 0).setData(Qt.UserRole, pid)
 
-        ref_edit = QLineEdit(str(ref)); ref_edit.setReadOnly(True)
+        ref_edit = QLineEdit(str(ref))
+        if self.invoice_type == "proforma":
+            ref_edit.setReadOnly(True)
+        else:
+            ref_edit.setReadOnly(True)  # Will be editable in edit mode
         num_act_edit = QLineEdit(str(num_act)); num_act_edit.setReadOnly(True)
         physico_edit = QLineEdit(str(physico)); physico_edit.setReadOnly(True)
         micro_edit = QLineEdit(str(micro)); micro_edit.setReadOnly(True)
@@ -177,14 +182,17 @@ class ProductManager(QWidget):
         if widget.isReadOnly():
             # Start edit (subtotal reste non modifiable)
             btn.setText("Sauver")
-            for col in [1, 2, 3, 4, 5]:
+            editable_cols = [1, 2, 3, 4, 5] if self.invoice_type == "standard" else [2, 3, 4, 5]
+            for col in editable_cols:
                 self.product_table.cellWidget(row, col).setReadOnly(False)
-            self.product_table.cellWidget(row, 1).setFocus()
+            focus_col = 1 if self.invoice_type == "standard" else 2
+            self.product_table.cellWidget(row, focus_col).setFocus()
         else:
             # Save edit
             btn.setText("Modifier")
             self.on_price_component_changed(row)
-            for col in [1, 2, 3, 4, 5]:
+            editable_cols = [1, 2, 3, 4, 5] if self.invoice_type == "standard" else [2, 3, 4, 5]
+            for col in editable_cols:
                 self.product_table.cellWidget(row, col).setReadOnly(True)
 
     def format_number(self, value):
@@ -223,14 +231,14 @@ class ProductManager(QWidget):
 
         # Mise à jour immédiate dans la base et interface
         pid = self.product_table.item(row, 0).data(Qt.UserRole)
-        ref = self.product_table.cellWidget(row, 1).text()
+        ref = int(self.product_table.cellWidget(row, 1).text() or 0)
         num_act = self.product_table.cellWidget(row, 2).text()
 
         self.db.update_product(pid, ref, num_act,
-                               self.format_number(physico),
-                               self.format_number(toxico),
-                               self.format_number(micro),
-                               subtotal_text)
+                               int(physico),
+                               int(toxico),
+                               int(micro),
+                               int(subtotal_value))
 
     def toggle_select(self, pid, row):
         btn = self.product_table.cellWidget(row, 9)
