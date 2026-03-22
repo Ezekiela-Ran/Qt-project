@@ -63,8 +63,21 @@ class DatabaseManager(Tables):
     def delete_type(self, type_id: int):
         cursor = self.conn.cursor()
         try:
-            query = "DELETE FROM product_type WHERE id = %s"
-            cursor.execute(query, (type_id,))
+            # Vérifier si le type a des produits utilisés dans des factures
+            cursor.execute("""
+                SELECT COUNT(*) FROM invoice_client ic 
+                JOIN products p ON ic.product_id = p.id 
+                WHERE p.product_type_id = %s
+            """, (type_id,))
+            count = cursor.fetchone()[0]
+            if count > 0:
+                raise ValueError("Cannot delete product type: it has products used in invoices.")
+            
+            # Supprimer les produits du type
+            cursor.execute("DELETE FROM products WHERE product_type_id = %s", (type_id,))
+            
+            # Supprimer le type
+            cursor.execute("DELETE FROM product_type WHERE id = %s", (type_id,))
             self.conn.commit()
         finally:
             cursor.close()

@@ -96,9 +96,13 @@ class ProductManager(QWidget):
         if not item:
             return
         tid = item.data(Qt.UserRole)  # récupérer l'ID stocké
-        self.db.delete_type(tid)
-        self.load_types()
-        self.product_table.setRowCount(0)
+        try:
+            self.db.delete_type(tid)
+            self.load_types()
+            self.product_table.setRowCount(0)
+        except ValueError as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Suppression impossible", str(e))
 
     def add_product(self):
         if not self.type_list.currentItem():
