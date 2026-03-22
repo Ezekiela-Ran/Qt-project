@@ -29,6 +29,10 @@ class ProformaInvoiceRecord(QtWidgets.QWidget):
             if hasattr(form, 'date_input') and invoice['date']:
                 form.date_input.setDate(QDate.fromString(str(invoice['date']), "yyyy-MM-dd"))
             
+            # Enregistrer l'ID sélectionné pour une modification sur Enregistrer
+            if hasattr(self.parent().parent(), 'body_layout'):
+                self.parent().parent().body_layout.current_invoice_id = invoice_id
+
             # Sélectionner les produits
             selected_products = self.proformainvoice.get_invoice_items(invoice_id, 'proforma')
             self.parent().parent().body_layout.product_manager.select_products(selected_products)

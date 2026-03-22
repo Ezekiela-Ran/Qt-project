@@ -112,7 +112,43 @@ class DatabaseManager(Tables):
         
         self.conn.commit()
         return invoice_id
-    
+
+    def update_standard_invoice(self, invoice_id, company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, selected_products):
+        self.cursor.execute(
+            "UPDATE standard_invoice SET company_name=%s, stat=%s, nif=%s, address=%s, date_issue=%s, date_result=%s, product_ref=%s, resp=%s, total=%s WHERE id=%s",
+            (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, invoice_id)
+        )
+
+        # Mettre à jour les produits sélectionnés pour cette facture
+        self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'standard'))
+        for product_id in selected_products:
+            product = self.get_product_by_id(product_id)
+            if product:
+                item_total = float(product['subtotal'] or 0)
+                self.cursor.execute(
+                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (invoice_id, 'standard', product_id, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                )
+        self.conn.commit()
+        return invoice_id
+
+    def update_proforma_invoice(self, invoice_id, company_name, nif, stat, date, resp, total, selected_products):
+        self.cursor.execute(
+            "UPDATE proforma_invoice SET company_name=%s, nif=%s, stat=%s, date=%s, resp=%s, total=%s WHERE id=%s",
+            (company_name, nif, stat, date, resp, total, invoice_id)
+        )
+        self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'proforma'))
+        for product_id in selected_products:
+            product = self.get_product_by_id(product_id)
+            if product:
+                item_total = float(product['subtotal'] or 0)
+                self.cursor.execute(
+                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (invoice_id, 'proforma', product_id, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                )
+        self.conn.commit()
+        return invoice_id
+
     def save_proforma_invoice(self, company_name, nif, stat, date, resp, total, selected_products):
         # Insérer la facture
         self.cursor.execute(

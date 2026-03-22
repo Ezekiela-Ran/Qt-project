@@ -39,6 +39,10 @@ class StandardInvoiceRecord(QtWidgets.QWidget):
             if hasattr(form, 'standard_invoice_number'):
                 form.standard_invoice_number.setText(f"N° facture: {invoice['id']}")
             
+            # Enregistrer l'ID sélectionné pour une modification sur Enregistrer
+            if hasattr(self.parent().parent(), 'body_layout'):
+                self.parent().parent().body_layout.current_invoice_id = invoice_id
+
             # Sélectionner les produits
             selected_products = self.standardinvoice.get_invoice_items(invoice_id, 'standard')
             self.parent().parent().body_layout.product_manager.select_products(selected_products)

@@ -27,6 +27,11 @@ class ProductManager(QWidget):
         self.del_type_btn = QPushButton("Supprimer")
         self.type_list = QListWidget()
 
+        # Appliquer style aux boutons de catégorie
+        button_style = "QPushButton { background-color: #1F4E79; color: white; padding: 4px 10px; border: none; border-radius: 4px; } QPushButton:hover { background-color: #163D62; }"
+        self.add_type_btn.setStyleSheet(button_style)
+        self.del_type_btn.setStyleSheet(button_style)
+
         type_list_layout.addWidget(self.label)
         type_list_layout.addWidget(self.add_type_btn)
         type_list_layout.addWidget(self.del_type_btn)
@@ -37,13 +42,17 @@ class ProductManager(QWidget):
         main_layout.addLayout(product_list_layout, 3)
 
         self.add_product_btn = QPushButton("Ajouter")
+        self.add_product_btn.setStyleSheet(button_style)
 
         self.product_table = QTableWidget()
         self.product_table.setColumnCount(10)
         self.product_table.setHorizontalHeaderLabels(["Désignation", "Ref.b.analyse", "N°Acte", "Physico", "Toxico", "Micro", "Sous total", "Suppr", "Modif", "Select"])
         self.product_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
 
-        product_list_layout.addWidget(self.add_product_btn)
+        add_button_layout = QHBoxLayout()
+        add_button_layout.addStretch()
+        add_button_layout.addWidget(self.add_product_btn)
+        product_list_layout.addLayout(add_button_layout)
         product_list_layout.addWidget(self.product_table)
 
         self.setLayout(main_layout)
@@ -63,6 +72,7 @@ class ProductManager(QWidget):
         if not types:
             item = QListWidgetItem("Aucune catégorie disponible")
             item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+            item.setTextAlignment(Qt.AlignCenter)
             self.type_list.addItem(item)
         else:
             for row in types:
@@ -70,6 +80,7 @@ class ProductManager(QWidget):
                 name = row["product_type_name"]
                 item = QListWidgetItem(name)
                 item.setData(Qt.UserRole, tid)  # stocker l'ID
+                item.setTextAlignment(Qt.AlignCenter)
                 self.type_list.addItem(item)
 
     def add_type(self):
@@ -135,6 +146,12 @@ class ProductManager(QWidget):
         btn_del = QPushButton("Suppr")
         btn_mod = QPushButton("Modifier")
         btn_sel = QPushButton("Select")
+
+        # Style boutons ligne produits
+        row_button_style = "QPushButton { background-color: #2F5A8F; color: white; padding: 3px 8px; border: none; border-radius: 3px; } QPushButton:hover { background-color: #1E3F61; }"
+        btn_del.setStyleSheet(row_button_style)
+        btn_mod.setStyleSheet(row_button_style)
+        btn_sel.setStyleSheet(row_button_style)
 
         self.product_table.setCellWidget(row, 7, btn_del)
         self.product_table.setCellWidget(row, 8, btn_mod)
@@ -214,12 +231,10 @@ class ProductManager(QWidget):
             btn.setText("Annuler")
             self.selected_products[pid] = True
             self.apply_selection_style(row)
-            self.disable_form_fields()
         else:
             btn.setText("Select")
             self.selected_products[pid] = False
             self.clear_selection_style(row)
-            self.enable_form_fields()
         self.selection_changed.emit()  # Émettre le signal
 
     def apply_selection_style(self, row):
@@ -290,7 +305,8 @@ class ProductManager(QWidget):
                     btn.setText("Annuler")
                     self.apply_selection_style(row)
                     break
-        self.disable_form_fields() if product_ids else None
+        # la sélection ne désactive plus les champs du formulaire client
+        return
 
     def load_products(self):
         self.product_table.setRowCount(0)

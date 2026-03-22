@@ -44,6 +44,9 @@ class BodyLayout(QtWidgets.QWidget):
         self.body_layout.addWidget(self.product_manager)
         self.body_layout.addLayout(bottom_layout)
 
+        # ID de la facture en cours de modification (None = nouvelle facture)
+        self.current_invoice_id = None
+
         # Connecter le signal de changement de sélection pour mettre à jour le total
         self.product_manager.selection_changed.connect(self.update_total_display)
 
@@ -135,34 +138,74 @@ class BodyLayout(QtWidgets.QWidget):
                 else:
                     product_ref = ""
                 address = form.address_input.text()
-                
+
                 # Calculer le total
                 total = self.calculate_total()
-                
-                # Sauvegarder
+
+                # Sauvegarder (update si invoice existante)
                 selected_products = [pid for pid, sel in self.product_manager.selected_products.items() if sel]
-                invoice_id = self.product_manager.db.save_standard_invoice(
-                    company_name, stat, nif, address, date_issue, date_result, product_ref, responsable, total, selected_products
-                )
-                
-                # Afficher le numéro de facture
+                if self.current_invoice_id:
+                    invoice_id = self.product_manager.db.update_standard_invoice(
+                        self.current_invoice_id,
+                        company_name,
+                        stat,
+                        nif,
+                        address,
+                        date_issue,
+                        date_result,
+                        product_ref,
+                        responsable,
+                        total,
+                        selected_products
+                    )
+                else:
+                    invoice_id = self.product_manager.db.save_standard_invoice(
+                        company_name,
+                        stat,
+                        nif,
+                        address,
+                        date_issue,
+                        date_result,
+                        product_ref,
+                        responsable,
+                        total,
+                        selected_products
+                    )
+
                 if hasattr(form, 'standard_invoice_number'):
                     form.standard_invoice_number.setText(f"N° facture: {invoice_id}")
-                
+
             elif GlobalVariable.invoice_type == "proforma":
                 if hasattr(form, 'date_input'):
                     date = form.date_input.date().toString("yyyy-MM-dd")
                 else:
                     date = ""
-                
+
                 # Calculer le total
                 total = self.calculate_total()
-                
-                # Sauvegarder
+
                 selected_products = [pid for pid, sel in self.product_manager.selected_products.items() if sel]
-                invoice_id = self.product_manager.db.save_proforma_invoice(
-                    company_name, nif, stat, date, responsable, total, selected_products
-                )
+                if self.current_invoice_id:
+                    invoice_id = self.product_manager.db.update_proforma_invoice(
+                        self.current_invoice_id,
+                        company_name,
+                        nif,
+                        stat,
+                        date,
+                        responsable,
+                        total,
+                        selected_products
+                    )
+                else:
+                    invoice_id = self.product_manager.db.save_proforma_invoice(
+                        company_name,
+                        nif,
+                        stat,
+                        date,
+                        responsable,
+                        total,
+                        selected_products
+                    )
             
             # Afficher popup de confirmation
             msg = QMessageBox()
@@ -212,6 +255,9 @@ class BodyLayout(QtWidgets.QWidget):
         
         # Désélectionner tous les produits
         self.product_manager.clear_selection()
+
+        # Réinitialiser l'identifiant du record sélectionné (mode nouveau enregistrement)
+        self.current_invoice_id = None
         
         # Remettre le total à 0
         self.net_a_payer_label.setText("Net à payer: 0.00 Ariary (ZERO ARIARY)")
