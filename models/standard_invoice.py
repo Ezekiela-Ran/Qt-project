@@ -10,6 +10,9 @@ class StandardInvoice(DatabaseManager):
     
     def get_invoice_items(self, invoice_id, invoice_type):
         return DatabaseManager.get_invoice_items(self, invoice_id, invoice_type)
+
+    def get_invoice_items_with_refs(self, invoice_id, invoice_type):
+        return DatabaseManager.get_invoice_items_with_refs(self, invoice_id, invoice_type)
     
     def get_standard_invoice_by_id(self, invoice_id):
         return DatabaseManager.get_standard_invoice_by_id(self, invoice_id)

@@ -43,9 +43,18 @@ class StandardInvoiceRecord(QtWidgets.QWidget):
             if hasattr(self.parent().parent(), 'body_layout'):
                 self.parent().parent().body_layout.current_invoice_id = invoice_id
 
-            # Sélectionner les produits
-            selected_products = self.standardinvoice.get_invoice_items(invoice_id, 'standard')
-            self.parent().parent().body_layout.product_manager.select_products(selected_products)
+            # Important: reset any previous invoice selection before applying this one
+            self.parent().parent().body_layout.product_manager.clear_selection()
+
+            # Sélectionner les produits avec leurs Ref.b.analyse sauvegardés
+            selected_items = self.standardinvoice.get_invoice_items_with_refs(invoice_id, 'standard')
+            selected_products = [row['product_id'] for row in selected_items]
+            ref_mapping = {
+                row['product_id']: row.get('ref_b_analyse')
+                for row in selected_items
+                if row.get('ref_b_analyse') is not None
+            }
+            self.parent().parent().body_layout.product_manager.select_products(selected_products, ref_mapping=ref_mapping)
             
             # Mettre à jour le total
             self.parent().parent().body_layout.update_total_display()

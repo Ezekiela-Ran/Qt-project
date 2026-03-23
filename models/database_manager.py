@@ -59,6 +59,12 @@ class DatabaseManager(Tables):
             if e.errno not in (1060, 1061):
                 raise
 
+        try:
+            self.cursor.execute("ALTER TABLE invoice_client ADD COLUMN ref_b_analyse INT NULL")
+        except mysql.connector.Error as e:
+            if e.errno not in (1060, 1061):
+                raise
+
     def fetch_all(self):
         cursor = self.conn.cursor(dictionary=True)
         try:
@@ -123,28 +129,59 @@ class DatabaseManager(Tables):
         self.cursor.execute(f"ALTER TABLE standard_invoice AUTO_INCREMENT = {invoice_start}")
         self.cursor.execute(f"ALTER TABLE proforma_invoice AUTO_INCREMENT = {invoice_start}")
         self.set_setting("ref_b_analyse_start", ref_start)
+        self.set_setting("ref_b_analyse_last", ref_start - 1)
         self.set_setting("invoice_id_start", invoice_start)
         self.conn.commit()
 
     def get_max_ref_b_analyse(self):
-        """Return current maximum ref_b_analyse (int) or 0 if none."""
+        """Return the last allocated global ref_b_analyse (int) or configured start-1."""
         cursor = self.conn.cursor()
         try:
-            cursor.execute("SELECT MAX(ref_b_analyse) FROM products")
+            cursor.execute("SELECT setting_value FROM app_settings WHERE setting_key=%s", ("ref_b_analyse_last",))
             row = cursor.fetchone()
-            if row:
+            if row and row[0] is not None:
                 try:
-                    max_value = int(row[0] or 0)
+                    return int(row[0])
                 except Exception:
-                    max_value = 0
-                if max_value > 0:
-                    return max_value
+                    pass
             configured_start = self.get_setting("ref_b_analyse_start", 1)
             try:
                 return max(int(configured_start) - 1, 0)
             except Exception:
                 return 0
-            return 0
+        finally:
+            cursor.close()
+
+    def allocate_next_ref_b_analyse(self):
+        """Atomically allocate and return the next global ref_b_analyse."""
+        cursor = self.conn.cursor()
+        try:
+            start = self.get_setting("ref_b_analyse_start", 1)
+            try:
+                start_value = int(start)
+            except Exception:
+                start_value = 1
+            cursor.execute(
+                """
+                INSERT INTO app_settings (setting_key, setting_value)
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE setting_value = setting_value
+                """,
+                ("ref_b_analyse_last", str(max(start_value - 1, 0))),
+            )
+            cursor.execute(
+                """
+                UPDATE app_settings
+                SET setting_value = LAST_INSERT_ID(CAST(setting_value AS UNSIGNED) + 1)
+                WHERE setting_key = %s
+                """,
+                ("ref_b_analyse_last",),
+            )
+            cursor.execute("SELECT LAST_INSERT_ID()")
+            row = cursor.fetchone()
+            next_ref = int(row[0]) if row and row[0] is not None else max(start_value, 1)
+            self.conn.commit()
+            return next_ref
         finally:
             cursor.close()
 
@@ -212,7 +249,7 @@ class DatabaseManager(Tables):
             self.conn.commit()
         self.conn.commit()
     
-    def save_standard_invoice(self, company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, selected_products):
+    def save_standard_invoice(self, company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, selected_products, selected_refs=None):
         # Insérer la facture
         self.cursor.execute(
             "INSERT INTO standard_invoice (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
@@ -221,19 +258,21 @@ class DatabaseManager(Tables):
         invoice_id = self.cursor.lastrowid
         
         # Insérer les produits sélectionnés
+        selected_refs = selected_refs or {}
         for product_id in selected_products:
             product = self.get_product_by_id(product_id)
             if product:
                 item_total = float(product['subtotal'] or 0)
+                ref_b_analyse = selected_refs.get(product_id)
                 self.cursor.execute(
-                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (invoice_id, 'standard', product_id, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (invoice_id, 'standard', product_id, ref_b_analyse, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
                 )
         
         self.conn.commit()
         return invoice_id
 
-    def update_standard_invoice(self, invoice_id, company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, selected_products):
+    def update_standard_invoice(self, invoice_id, company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, selected_products, selected_refs=None):
         self.cursor.execute(
             "UPDATE standard_invoice SET company_name=%s, stat=%s, nif=%s, address=%s, date_issue=%s, date_result=%s, product_ref=%s, resp=%s, total=%s WHERE id=%s",
             (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, invoice_id)
@@ -241,13 +280,15 @@ class DatabaseManager(Tables):
 
         # Mettre à jour les produits sélectionnés pour cette facture
         self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'standard'))
+        selected_refs = selected_refs or {}
         for product_id in selected_products:
             product = self.get_product_by_id(product_id)
             if product:
                 item_total = float(product['subtotal'] or 0)
+                ref_b_analyse = selected_refs.get(product_id)
                 self.cursor.execute(
-                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (invoice_id, 'standard', product_id, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (invoice_id, 'standard', product_id, ref_b_analyse, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
                 )
         self.conn.commit()
         return invoice_id
@@ -263,8 +304,8 @@ class DatabaseManager(Tables):
             if product:
                 item_total = float(product['subtotal'] or 0)
                 self.cursor.execute(
-                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (invoice_id, 'proforma', product_id, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (invoice_id, 'proforma', product_id, None, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
                 )
         self.conn.commit()
         return invoice_id
@@ -283,8 +324,8 @@ class DatabaseManager(Tables):
             if product:
                 item_total = float(product['subtotal'] or 0)
                 self.cursor.execute(
-                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (invoice_id, 'proforma', product_id, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (invoice_id, 'proforma', product_id, None, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
                 )
         
         self.conn.commit()
@@ -313,8 +354,15 @@ class DatabaseManager(Tables):
         return [tuple(d.values()) for d in results]
     
     def get_invoice_items(self, invoice_id, invoice_type):
-        self.cursor.execute("SELECT product_id FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, invoice_type))
+        self.cursor.execute("SELECT product_id FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s ORDER BY id ASC", (invoice_id, invoice_type))
         return [row['product_id'] for row in self.cursor.fetchall()]
+
+    def get_invoice_items_with_refs(self, invoice_id, invoice_type):
+        self.cursor.execute(
+            "SELECT product_id, ref_b_analyse FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s ORDER BY id ASC",
+            (invoice_id, invoice_type),
+        )
+        return self.cursor.fetchall()
     
     def get_standard_invoice_by_id(self, invoice_id):
         self.cursor.execute("SELECT * FROM standard_invoice WHERE id=%s", (invoice_id,))

@@ -33,6 +33,9 @@ class ProformaInvoiceRecord(QtWidgets.QWidget):
             if hasattr(self.parent().parent(), 'body_layout'):
                 self.parent().parent().body_layout.current_invoice_id = invoice_id
 
+            # Important: reset any previous invoice selection before applying this one
+            self.parent().parent().body_layout.product_manager.clear_selection()
+
             # Sélectionner les produits
             selected_products = self.proformainvoice.get_invoice_items(invoice_id, 'proforma')
             self.parent().parent().body_layout.product_manager.select_products(selected_products)

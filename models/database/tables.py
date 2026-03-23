@@ -75,6 +75,7 @@ class Tables:
             invoice_id INT NOT NULL,
             invoice_type ENUM('standard', 'proforma') NOT NULL,
             product_id INT NOT NULL,
+            ref_b_analyse INT NULL,
             quantity INT DEFAULT 1,
             physico DECIMAL(10,2) DEFAULT 0,
             micro DECIMAL(10,2) DEFAULT 0,

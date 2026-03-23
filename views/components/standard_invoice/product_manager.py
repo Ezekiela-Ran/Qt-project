@@ -15,6 +15,7 @@ class ProductManager(QWidget):
         self.invoice_type = invoice_type
         self.selected_products = {}  # dictionnaire {pid: True/False}
         self.selection_order = []  # ordre de sélection pour numéroter dynamiquement
+        self.selected_refs = {}  # dictionnaire {pid: ref_b_analyse} pour standard
 
 
         # cadre principale
@@ -302,7 +303,6 @@ class ProductManager(QWidget):
     def toggle_select(self, pid, row):
         btn_col = 9 if self.invoice_type == "standard" else 7
         btn = self.product_table.cellWidget(row, btn_col)
-        ref_col = 1 if self.invoice_type == "standard" else None
         currently_selected = bool(self.selected_products.get(pid, False))
 
         if not currently_selected:
@@ -312,6 +312,12 @@ class ProductManager(QWidget):
             self.selected_products[pid] = True
             if pid not in self.selection_order:
                 self.selection_order.append(pid)
+            if self.invoice_type == "standard":
+                try:
+                    next_ref = int(self.product_service.allocate_next_ref_b_analyse())
+                except Exception:
+                    next_ref = int(self.product_service.get_max_ref_b_analyse() or 0) + 1
+                self.selected_refs[pid] = next_ref
             self.apply_selection_style(row)
         else:
             # Deselect: unmark and remove from order
@@ -320,21 +326,16 @@ class ProductManager(QWidget):
             self.selected_products[pid] = False
             if pid in self.selection_order:
                 self.selection_order.remove(pid)
+            if pid in self.selected_refs:
+                del self.selected_refs[pid]
             self.clear_selection_style(row)
 
-        # Renumber UI refs dynamically (1..n) according to selection_order
+        # Refresh displayed refs for standard rows according to selected_refs mapping
         self._renumber_selection_ui()
         self.selection_changed.emit()
 
     def _renumber_selection_ui(self):
-        # Assign contiguous refs 1..n to selected products based on selection_order
-        # Rows not selected get 0
-        # Build mapping pid -> assigned ref
-        try:
-            start_ref = int(self.product_service.get_max_ref_b_analyse() or 0) + 1
-        except Exception:
-            start_ref = 1
-        assigned = {pid: start_ref + idx for idx, pid in enumerate(self.selection_order)}
+        # Keep UI in sync with the allocated/persisted ref mapping.
         for row in range(self.product_table.rowCount()):
             item = self.product_table.item(row, 0)
             if not item:
@@ -346,8 +347,8 @@ class ProductManager(QWidget):
                 ref_widget = self.product_table.cellWidget(row, 1)
                 if ref_widget is None:
                     continue
-                if pid in assigned:
-                    ref_widget.setText(str(assigned[pid]))
+                if pid in self.selected_refs:
+                    ref_widget.setText(str(self.selected_refs[pid]))
                 else:
                     ref_widget.setText("0")
 
@@ -422,14 +423,25 @@ class ProductManager(QWidget):
             if hasattr(form, 'date_input'):
                 form.date_input.setEnabled(True)
 
-    def select_products(self, product_ids):
-        # Select given products and maintain selection order. Do not persist refs here.
+    def select_products(self, product_ids, ref_mapping=None):
+        # Select given products and maintain selection order.
+        # For standard invoices, ref_mapping can restore previously saved refs.
+        ref_mapping = ref_mapping or {}
         for pid in product_ids:
             if self.selected_products.get(pid, False):
                 continue
             self.selected_products[pid] = True
             if pid not in self.selection_order:
                 self.selection_order.append(pid)
+            if self.invoice_type == "standard":
+                existing_ref = ref_mapping.get(pid)
+                if existing_ref:
+                    self.selected_refs[pid] = int(existing_ref)
+                else:
+                    try:
+                        self.selected_refs[pid] = int(self.product_service.allocate_next_ref_b_analyse())
+                    except Exception:
+                        self.selected_refs[pid] = int(self.product_service.get_max_ref_b_analyse() or 0) + 1
             # Trouver la ligne et appliquer la sélection UI
             for row in range(self.product_table.rowCount()):
                 row_item = self.product_table.item(row, 0)
@@ -443,7 +455,7 @@ class ProductManager(QWidget):
                         btn.setText("Annuler")
                         self.apply_selection_style(row)
                     break
-        # Renumber UI refs after bulk selection
+        # Refresh refs in UI after bulk selection
         self._renumber_selection_ui()
         # la sélection ne désactive plus les champs du formulaire client
         return
@@ -484,32 +496,8 @@ class ProductManager(QWidget):
                         btn = self.product_table.cellWidget(row, btn_col)
                         if btn:
                             btn.setText("Select")
-                        # decrement ref for standard invoices
-                        if self.invoice_type == "standard":
-                            ref_widget = self.product_table.cellWidget(row, 1)
-                            if ref_widget is None:
-                                continue
-                            try:
-                                cur = int(ref_widget.text() or 0)
-                            except Exception:
-                                cur = 0
-                            # Deselect: free the reference (set to 0)
-                            new = 0
-                            ref_widget.setText("0")
-                            # persist
-                            num_act = self.product_table.cellWidget(row, 2).text()
-                            physico = int(self.parse_number(self.product_table.cellWidget(row, 3).text()))
-                            toxico = int(self.parse_number(self.product_table.cellWidget(row, 4).text()))
-                            micro = int(self.parse_number(self.product_table.cellWidget(row, 5).text()))
-                            subtotal = int((physico + toxico + micro) or 0)
-                            try:
-                                    # Do not persist ref to DB on UI deselection here
-                                    self.product_service.update_product(pid, new, num_act, physico, toxico, micro, subtotal, update_ref=False)
-                            except Exception:
-                                pass
-                        else:  # proforma
-                            # For proforma, no ref or num_act. Just update physico/toxico/micro
-                            pass  # Selection is UI-only for proforma, no DB update needed
+                        if pid in self.selected_refs:
+                            del self.selected_refs[pid]
                         self.selected_products[pid] = False
                         self.clear_selection_style(row)
                         # also remove from selection order
@@ -520,6 +508,12 @@ class ProductManager(QWidget):
         # Renumber UI refs to reflect cleared selections
         self._renumber_selection_ui()
         self.selection_changed.emit()
+
+    def get_selected_ref_mapping(self):
+        if self.invoice_type != "standard":
+            return {}
+        selected_set = {pid for pid, selected in self.selected_products.items() if selected}
+        return {pid: ref for pid, ref in self.selected_refs.items() if pid in selected_set}
 
     def _apply_stylesheet(self, stylesheet_path):
         try:

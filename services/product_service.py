@@ -10,6 +10,9 @@ class ProductService:
     def get_max_ref_b_analyse(self):
         return self.db.get_max_ref_b_analyse()
 
+    def allocate_next_ref_b_analyse(self):
+        return self.db.allocate_next_ref_b_analyse()
+
     def get_product_by_id(self, product_id):
         return self.db.get_product_by_id(product_id)
 

@@ -1,6 +1,4 @@
 from PySide6.QtWidgets import QMessageBox
-from PySide6.QtCore import Qt
-
 from views.foundation.globals import GlobalVariable
 
 
@@ -50,45 +48,15 @@ class SaveInvoiceAction:
         if not selected_products:
             errors.append("Au moins un produit doit être sélectionné")
 
-        # Persist current in-memory refs for selected products so validation uses up-to-date values
         pm = body_layout.product_manager
-        if pm.invoice_type == "standard":
-            try:
-                db_max = int(body_layout.product_service.get_max_ref_b_analyse() or 0)
-            except Exception:
-                db_max = 0
-            # Ensure we iterate in selection order so assigned refs are sequential
-            order = pm.selection_order[:] if getattr(pm, 'selection_order', None) else list(selected_products)
-            for pid in order:
-                # find row for pid
-                for row in range(pm.product_table.rowCount()):
-                    item = pm.product_table.item(row, 0)
-                    if item and item.data(Qt.UserRole) == pid:
-                        ref_widget = pm.product_table.cellWidget(row, 1)
-                        num_act = pm.product_table.cellWidget(row, 2).text()
-                        physico = int(pm.parse_number(pm.product_table.cellWidget(row, 3).text()))
-                        toxico = int(pm.parse_number(pm.product_table.cellWidget(row, 4).text()))
-                        micro = int(pm.parse_number(pm.product_table.cellWidget(row, 5).text()))
-                        subtotal = int((physico + toxico + micro) or 0)
-                        # assign next DB-unique ref (db_max + 1, sequential)
-                        db_max += 1
-                        assigned = db_max
-                        # update UI and persist
-                        try:
-                            if ref_widget:
-                                ref_widget.setText(str(assigned))
-                            body_layout.product_service.update_product(pid, assigned, num_act, physico, toxico, micro, subtotal, update_ref=True)
-                        except Exception:
-                            pass
-                        break
-
+        selected_refs = pm.get_selected_ref_mapping() if GlobalVariable.invoice_type == "standard" else {}
         if GlobalVariable.invoice_type == "standard":
             for pid in selected_products:
-                product = body_layout.product_service.get_product_by_id(pid)
-                if not product or not product.get("ref_b_analyse") or str(product["ref_b_analyse"]).strip() == "":
+                if pid not in selected_refs:
+                    product = body_layout.product_service.get_product_by_id(pid)
                     product_name = product["product_name"] if product else "inconnu"
                     errors.append(
-                        f"Le champ 'Ref.b.analyse' est obligatoire pour le produit {product_name}"
+                        f"Ref.b.analyse manquant pour le produit {product_name}. Désélectionnez puis resélectionnez le produit."
                     )
 
         if errors:
@@ -120,6 +88,7 @@ class SaveInvoiceAction:
                     responsable,
                     total,
                     selected_products,
+                    selected_refs,
                 )
             else:
                 invoice_id = body_layout.invoice_service.save_standard_invoice(
@@ -133,6 +102,7 @@ class SaveInvoiceAction:
                     responsable,
                     total,
                     selected_products,
+                    selected_refs,
                 )
 
             if hasattr(form, "standard_invoice_number"):
