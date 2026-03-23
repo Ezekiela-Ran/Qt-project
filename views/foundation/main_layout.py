@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QMessageBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QMessageBox, QInputDialog
 from views.foundation.head_layout import HeadLayout
 from views.foundation.body_layout import BodyLayout
 from views.components.menu_bar import MenuBar
@@ -43,6 +43,53 @@ class MainLayout(QWidget):
 
     def menubar_click_proforma(self):
         self.build_ui("proforma")
+
+    def menubar_click_initialize_counters(self):
+        db = DatabaseManager()
+        try:
+            if db.has_business_data():
+                QMessageBox.warning(
+                    self,
+                    "Initialisation impossible",
+                    "Des données existent déjà dans la base. L'ID de facture et la Ref.b.analyse ont déjà été initialisés et ne peuvent plus être modifiés.",
+                )
+                return
+
+            default_invoice_start = int(db.get_setting("invoice_id_start", 1) or 1)
+            default_ref_start = int(db.get_setting("ref_b_analyse_start", 1) or 1)
+
+            invoice_start, ok = QInputDialog.getInt(
+                self,
+                "Initialiser l'ID de facture",
+                "Valeur de départ pour l'ID de facture :",
+                value=default_invoice_start,
+                minValue=1,
+            )
+            if not ok:
+                return
+
+            ref_start, ok = QInputDialog.getInt(
+                self,
+                "Initialiser Ref.b.analyse",
+                "Valeur de départ pour Ref.b.analyse :",
+                value=default_ref_start,
+                minValue=1,
+            )
+            if not ok:
+                return
+
+            db.initialize_document_counters(invoice_start, ref_start)
+            QMessageBox.information(
+                self,
+                "Initialisation réussie",
+                f"Les prochains identifiants commenceront à {invoice_start} pour les factures et à {ref_start} pour Ref.b.analyse.",
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Initialisation impossible", str(exc))
+        except Exception as exc:
+            QMessageBox.critical(self, "Erreur", f"L'initialisation a échoué : {exc}")
+        finally:
+            db.close()
 
     def menubar_click_reset(self):
         reply = QMessageBox.question(self, "Réinitialisation", "Confirmer la réinitialisation : les données actuelles seront archivées pour l'année courante et les compteurs seront remis à 1. Continuer ?",

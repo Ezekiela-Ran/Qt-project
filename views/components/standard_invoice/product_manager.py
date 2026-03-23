@@ -131,10 +131,10 @@ class ProductManager(QWidget):
             self.product_table.setCellWidget(row, 1, ref_edit)
 
         num_act_edit = QLineEdit(str(num_act)); num_act_edit.setReadOnly(True)
-        physico_edit = QLineEdit(str(physico)); physico_edit.setReadOnly(True)
-        toxico_edit = QLineEdit(str(toxico)); toxico_edit.setReadOnly(True)
-        micro_edit = QLineEdit(str(micro)); micro_edit.setReadOnly(True)
-        subtotal_edit = QLineEdit(str(subtotal)); subtotal_edit.setReadOnly(True)
+        physico_edit = QLineEdit(self.format_number(physico)); physico_edit.setReadOnly(True)
+        toxico_edit = QLineEdit(self.format_number(toxico)); toxico_edit.setReadOnly(True)
+        micro_edit = QLineEdit(self.format_number(micro)); micro_edit.setReadOnly(True)
+        subtotal_edit = QLineEdit(self.format_number(subtotal)); subtotal_edit.setReadOnly(True)
 
         # Set validators for integer fields
         int_validator = QIntValidator(0, 999999)  # Allow 0 to large number
@@ -143,7 +143,6 @@ class ProductManager(QWidget):
         micro_edit.setValidator(int_validator)
         if self.invoice_type == "standard":
             ref_edit.setValidator(int_validator)
-        num_act_edit.setValidator(int_validator)
         subtotal_edit.setValidator(int_validator)
 
         if self.invoice_type == "standard":
@@ -199,17 +198,24 @@ class ProductManager(QWidget):
             widget_col = 1
             btn_col = 8
             editable_cols = [1, 2, 3, 4, 5]
+            amount_cols = [3, 4, 5]
             focus_col = 1
         else:
             widget_col = 1
             btn_col = 7
             editable_cols = [1, 2, 3, 4]
+            amount_cols = [2, 3, 4]
             focus_col = 1
         widget = self.product_table.cellWidget(row, widget_col)
         btn = self.product_table.cellWidget(row, btn_col)
         if widget.isReadOnly():
             # Start edit (subtotal reste non modifiable)
             btn.setText("Sauver")
+            # Remove display formatting while editing amount fields.
+            for col in amount_cols:
+                amount_widget = self.product_table.cellWidget(row, col)
+                if amount_widget:
+                    amount_widget.setText(str(int(self.parse_number(amount_widget.text()))))
             for col in editable_cols:
                 self.product_table.cellWidget(row, col).setReadOnly(False)
             self.product_table.cellWidget(row, focus_col).setFocus()
@@ -217,25 +223,26 @@ class ProductManager(QWidget):
             # Save edit
             btn.setText("Modifier")
             self.on_price_component_changed(row)
+            for col in amount_cols:
+                amount_widget = self.product_table.cellWidget(row, col)
+                if amount_widget:
+                    amount_widget.setText(self.format_number(amount_widget.text()))
             for col in editable_cols:
                 self.product_table.cellWidget(row, col).setReadOnly(True)
 
     def format_number(self, value):
-        if value is None:
-            return "0 Ariary"
-        try:
-            v = float(value)
-        except ValueError:
-            return "0 Ariary"
-        if v.is_integer():
-            formatted = f"{int(v):,}".replace(",", " ")
-            return f"{formatted} Ariary"
-        formatted = f"{v:,.2f}".replace(",", " ")
-        return f"{formatted} Ariary"
+        v = self.parse_number(value)
+        formatted = f"{int(v):,}".replace(",", " ")
+        return f"{formatted} Ar"
 
     def parse_number(self, value):
         try:
-            return float(value)
+            if value is None:
+                return 0.0
+            cleaned = str(value).replace("\u00a0", " ").replace("Ariary", "").replace("Ar", "").replace(" ", "").strip()
+            if cleaned == "":
+                return 0.0
+            return float(cleaned)
         except (TypeError, ValueError):
             return 0.0
 
@@ -272,7 +279,7 @@ class ProductManager(QWidget):
         # Mise à jour immédiate dans la base et interface
         pid = self.product_table.item(row, 0).data(Qt.UserRole)
         if self.invoice_type == "standard":
-            ref = int(self.product_table.cellWidget(row, ref_col).text() or 0)
+            ref = int(self.parse_number(self.product_table.cellWidget(row, ref_col).text()))
         else:
             ref = 0  # Not used for proforma
         num_act = self.product_table.cellWidget(row, num_act_col).text()
@@ -316,7 +323,11 @@ class ProductManager(QWidget):
         # Assign contiguous refs 1..n to selected products based on selection_order
         # Rows not selected get 0
         # Build mapping pid -> assigned ref
-        assigned = {pid: idx + 1 for idx, pid in enumerate(self.selection_order)}
+        try:
+            start_ref = int(self.product_service.get_max_ref_b_analyse() or 0) + 1
+        except Exception:
+            start_ref = 1
+        assigned = {pid: start_ref + idx for idx, pid in enumerate(self.selection_order)}
         for row in range(self.product_table.rowCount()):
             item = self.product_table.item(row, 0)
             if not item:
@@ -480,9 +491,9 @@ class ProductManager(QWidget):
                             ref_widget.setText("0")
                             # persist
                             num_act = self.product_table.cellWidget(row, 2).text()
-                            physico = int(self.product_table.cellWidget(row, 3).text() or 0)
-                            toxico = int(self.product_table.cellWidget(row, 4).text() or 0)
-                            micro = int(self.product_table.cellWidget(row, 5).text() or 0)
+                            physico = int(self.parse_number(self.product_table.cellWidget(row, 3).text()))
+                            toxico = int(self.parse_number(self.product_table.cellWidget(row, 4).text()))
+                            micro = int(self.parse_number(self.product_table.cellWidget(row, 5).text()))
                             subtotal = int((physico + toxico + micro) or 0)
                             try:
                                     # Do not persist ref to DB on UI deselection here

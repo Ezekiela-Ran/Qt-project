@@ -37,7 +37,7 @@ class BodyLayout(QtWidgets.QWidget):
         self.product_manager.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         # Label pour le total
-        self.net_a_payer_label = QtWidgets.QLabel("Net à payer: 0.00 Ariary (ZERO ARIARY)")
+        self.net_a_payer_label = QtWidgets.QLabel("Net à payer: 0 Ar (ZERO ARIARY)")
         self.net_a_payer_label.setObjectName("netAPayerLabel")
         self.net_a_payer_label.setAlignment(Qt.AlignCenter)
 

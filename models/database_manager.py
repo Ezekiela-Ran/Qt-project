@@ -4,6 +4,14 @@ import mysql.connector
 class DatabaseManager(Tables):
     table_name = ""
 
+    @staticmethod
+    def _format_amount_for_display(value):
+        try:
+            amount = int(float(value or 0))
+        except (TypeError, ValueError):
+            amount = 0
+        return f"{amount:,}".replace(",", " ") + " Ar"
+
     @classmethod
     def create_tables(cls):
         db = cls()
@@ -13,6 +21,7 @@ class DatabaseManager(Tables):
             db.product_type_table()
             db.products_table()
             db.invoice_client_table()
+            db.app_settings_table()
             db.migrate_tables()  # Ajouter les colonnes manquantes
         finally:
             db.close()
@@ -43,6 +52,13 @@ class DatabaseManager(Tables):
             if e.errno not in (1060, 1061):  # Column already exists or duplicate key
                 raise
 
+        try:
+            self.cursor.execute("ALTER TABLE products MODIFY COLUMN num_act VARCHAR(255) NULL")
+        except mysql.connector.Error as e:
+            # Ignore harmless schema mismatch errors if already compatible.
+            if e.errno not in (1060, 1061):
+                raise
+
     def fetch_all(self):
         cursor = self.conn.cursor(dictionary=True)
         try:
@@ -50,6 +66,65 @@ class DatabaseManager(Tables):
             return cursor.fetchall()
         finally:
             cursor.close()
+
+    def get_setting(self, key, default=None):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("SELECT setting_value FROM app_settings WHERE setting_key=%s", (key,))
+            row = cursor.fetchone()
+            return row[0] if row else default
+        finally:
+            cursor.close()
+
+    def set_setting(self, key, value):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                INSERT INTO app_settings (setting_key, setting_value)
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+                """,
+                (key, str(value)),
+            )
+            self.conn.commit()
+        finally:
+            cursor.close()
+
+    def has_business_data(self):
+        tables_to_check = (
+            "standard_invoice",
+            "proforma_invoice",
+            "invoice_client",
+            "products",
+            "product_type",
+        )
+        cursor = self.conn.cursor()
+        try:
+            for table_name in tables_to_check:
+                cursor.execute(f"SELECT EXISTS(SELECT 1 FROM {table_name} LIMIT 1)")
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return True
+            return False
+        finally:
+            cursor.close()
+
+    def initialize_document_counters(self, invoice_start, ref_start):
+        invoice_start = int(invoice_start)
+        ref_start = int(ref_start)
+        if invoice_start < 1 or ref_start < 1:
+            raise ValueError("Les valeurs d'initialisation doivent être supérieures ou égales à 1.")
+        if self.has_business_data():
+            raise ValueError(
+                "Initialisation impossible : des données existent déjà dans la base. Les compteurs ont déjà été initialisés et ne peuvent plus être modifiés."
+            )
+
+        self.cursor.execute(f"ALTER TABLE standard_invoice AUTO_INCREMENT = {invoice_start}")
+        self.cursor.execute(f"ALTER TABLE proforma_invoice AUTO_INCREMENT = {invoice_start}")
+        self.set_setting("ref_b_analyse_start", ref_start)
+        self.set_setting("invoice_id_start", invoice_start)
+        self.conn.commit()
 
     def get_max_ref_b_analyse(self):
         """Return current maximum ref_b_analyse (int) or 0 if none."""
@@ -59,9 +134,16 @@ class DatabaseManager(Tables):
             row = cursor.fetchone()
             if row:
                 try:
-                    return int(row[0] or 0)
+                    max_value = int(row[0] or 0)
                 except Exception:
-                    return 0
+                    max_value = 0
+                if max_value > 0:
+                    return max_value
+            configured_start = self.get_setting("ref_b_analyse_start", 1)
+            try:
+                return max(int(configured_start) - 1, 0)
+            except Exception:
+                return 0
             return 0
         finally:
             cursor.close()
@@ -219,11 +301,15 @@ class DatabaseManager(Tables):
     def get_standard_invoices(self):
         self.cursor.execute("SELECT id, company_name, address, date_issue, date_result, product_ref, resp, total FROM standard_invoice ORDER BY created_at ASC")
         results = self.cursor.fetchall()
+        for row in results:
+            row['total'] = self._format_amount_for_display(row.get('total'))
         return [tuple(d.values()) for d in results]
     
     def get_proforma_invoices(self):
         self.cursor.execute("SELECT id, company_name, date, resp, total FROM proforma_invoice ORDER BY created_at ASC")
         results = self.cursor.fetchall()
+        for row in results:
+            row['total'] = self._format_amount_for_display(row.get('total'))
         return [tuple(d.values()) for d in results]
     
     def get_invoice_items(self, invoice_id, invoice_type):
@@ -304,6 +390,11 @@ class DatabaseManager(Tables):
             # Reset ref_b_analyse values in products to 0 so counter restarts at 1
             try:
                 self.cursor.execute("UPDATE products SET ref_b_analyse=0")
+            except Exception:
+                pass
+
+            try:
+                self.cursor.execute("DELETE FROM app_settings WHERE setting_key IN ('ref_b_analyse_start', 'invoice_id_start')")
             except Exception:
                 pass
 

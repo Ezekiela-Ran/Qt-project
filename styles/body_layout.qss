@@ -9,7 +9,7 @@
 }
 
 QPushButton#saveButton {
-    background-color: #1F4E79;
+    background-color: #2F5A8F;
     color: white;
     padding: 10px;
     border: none;
@@ -17,11 +17,11 @@ QPushButton#saveButton {
 }
 
 QPushButton#saveButton:hover {
-    background-color: #163D62;
+    background-color: #1E3F61;
 }
 
 QPushButton#printButton {
-    background-color: #4CAF50;
+    background-color: #2F5A8F;
     color: white;
     padding: 10px;
     border: none;
@@ -29,11 +29,11 @@ QPushButton#printButton {
 }
 
 QPushButton#printButton:hover {
-    background-color: #45A049;
+    background-color: #1E3F61;
 }
 
 QPushButton#previewButton {
-    background-color: #2196F3;
+    background-color: #2F5A8F;
     color: white;
     padding: 10px;
     border: none;
@@ -41,11 +41,11 @@ QPushButton#previewButton {
 }
 
 QPushButton#previewButton:hover {
-    background-color: #1976D2;
+    background-color: #1E3F61;
 }
 
 QPushButton#convertButton {
-    background-color: #FF9800;
+    background-color: #2F5A8F;
     color: white;
     padding: 10px;
     border: none;
@@ -53,5 +53,5 @@ QPushButton#convertButton {
 }
 
 QPushButton#convertButton:hover {
-    background-color: #E68900;
+    background-color: #1E3F61;
 }

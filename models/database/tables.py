@@ -85,6 +85,14 @@ class Tables:
         )
         """)
 
+    def app_settings_table(self):
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            setting_key VARCHAR(255) PRIMARY KEY,
+            setting_value VARCHAR(255) NOT NULL
+        )
+        """)
+
     def close(self):
         self.conn.commit()
         self.cursor.close()

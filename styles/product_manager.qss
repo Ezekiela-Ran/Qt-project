@@ -5,7 +5,7 @@ QLabel#categoryTitle {
 }
 
 QPushButton#categoryActionButton {
-    background-color: #1F4E79;
+    background-color: #2F5A8F;
     color: white;
     padding: 4px 10px;
     border: none;
@@ -13,7 +13,7 @@ QPushButton#categoryActionButton {
 }
 
 QPushButton#categoryActionButton:hover {
-    background-color: #163D62;
+    background-color: #1E3F61;
 }
 
 QPushButton#rowActionButton {

@@ -36,7 +36,11 @@ class PreviewInvoiceAction:
         if not ordered_selected:
             ordered_selected = [pid for pid in selected_products]
 
-        ref_mapping = {pid: idx + 1 for idx, pid in enumerate(ordered_selected)}
+        try:
+            start_ref = int(body_layout.product_service.get_max_ref_b_analyse() or 0) + 1
+        except Exception:
+            start_ref = 1
+        ref_mapping = {pid: start_ref + idx for idx, pid in enumerate(ordered_selected)}
 
         html = body_layout.invoice_printer.generate_invoice_html(
             form,

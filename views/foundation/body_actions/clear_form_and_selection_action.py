@@ -24,4 +24,4 @@ class ClearFormAndSelectionAction:
 
         body_layout.product_manager.clear_selection()
         body_layout.current_invoice_id = None
-        body_layout.net_a_payer_label.setText("Net à payer: 0.00 Ariary (ZERO ARIARY)")
+        body_layout.net_a_payer_label.setText("Net à payer: 0 Ar (ZERO ARIARY)")

@@ -66,9 +66,9 @@ class SaveInvoiceAction:
                     if item and item.data(Qt.UserRole) == pid:
                         ref_widget = pm.product_table.cellWidget(row, 1)
                         num_act = pm.product_table.cellWidget(row, 2).text()
-                        physico = int(pm.product_table.cellWidget(row, 3).text() or 0)
-                        toxico = int(pm.product_table.cellWidget(row, 4).text() or 0)
-                        micro = int(pm.product_table.cellWidget(row, 5).text() or 0)
+                        physico = int(pm.parse_number(pm.product_table.cellWidget(row, 3).text()))
+                        toxico = int(pm.parse_number(pm.product_table.cellWidget(row, 4).text()))
+                        micro = int(pm.parse_number(pm.product_table.cellWidget(row, 5).text()))
                         subtotal = int((physico + toxico + micro) or 0)
                         # assign next DB-unique ref (db_max + 1, sequential)
                         db_max += 1
