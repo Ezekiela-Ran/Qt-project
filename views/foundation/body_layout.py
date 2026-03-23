@@ -69,7 +69,8 @@ class BodyLayout(QtWidgets.QWidget):
         bottom_layout.addWidget(self.save_button)
         bottom_layout.addWidget(self.print_button)
         bottom_layout.addWidget(self.preview_button)
-        bottom_layout.addWidget(self.certificate_button)
+        if invoice_type != "proforma":
+            bottom_layout.addWidget(self.certificate_button)
         if invoice_type == "proforma":
             bottom_layout.addWidget(self.convert_button)
 
@@ -86,7 +87,8 @@ class BodyLayout(QtWidgets.QWidget):
         self.save_button.clicked.connect(self.save_invoice)
         self.print_button.clicked.connect(self.print_invoice)
         self.preview_button.clicked.connect(self.preview_invoice)
-        self.certificate_button.clicked.connect(self.open_certificate_dialog)
+        if invoice_type != "proforma":
+            self.certificate_button.clicked.connect(self.open_certificate_dialog)
         if invoice_type == "proforma":
             self.convert_button.clicked.connect(self.convert_to_standard)
 
