@@ -42,5 +42,6 @@ class CertificateAction:
             form,
             selected_products,
             body_layout.db_manager,
+            product_manager=body_layout.product_manager,
         )
         dlg.exec()
