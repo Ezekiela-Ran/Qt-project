@@ -4,6 +4,22 @@ from views.foundation.globals import GlobalVariable
 
 class SaveInvoiceAction:
     @staticmethod
+    def _allocate_refs_for_save(body_layout, selected_products):
+        pm = body_layout.product_manager
+        allocated_refs = dict(pm.get_selected_ref_mapping())
+        ordered_selected = [
+            pid for pid in pm.selection_order
+            if pid in selected_products and pm.selected_products.get(pid, False)
+        ]
+
+        for pid in ordered_selected:
+            if pid in allocated_refs:
+                continue
+            allocated_refs[pid] = int(body_layout.product_service.allocate_next_ref_b_analyse())
+
+        return allocated_refs
+
+    @staticmethod
     def _refresh_record_list(main_layout, body_layout):
         head_layout = getattr(main_layout, "head_layout", None)
         record_widget = getattr(head_layout, "record", None)
@@ -52,6 +68,10 @@ class SaveInvoiceAction:
         selected_refs = pm.get_selected_ref_mapping() if GlobalVariable.invoice_type == "standard" else {}
         selected_num_acts = pm.get_selected_num_act_mapping() if GlobalVariable.invoice_type == "standard" else {}
         if GlobalVariable.invoice_type == "standard":
+            if not body_layout.current_invoice_id:
+                selected_refs = SaveInvoiceAction._allocate_refs_for_save(body_layout, selected_products)
+                pm.selected_refs.update(selected_refs)
+
             for pid in selected_products:
                 if pid not in selected_refs:
                     product = body_layout.product_service.get_product_by_id(pid)

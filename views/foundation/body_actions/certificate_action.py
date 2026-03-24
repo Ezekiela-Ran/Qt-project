@@ -10,6 +10,14 @@ from PySide6.QtWidgets import QMessageBox
 class CertificateAction:
     @staticmethod
     def execute(body_layout):
+        if not body_layout.current_invoice_id:
+            QMessageBox.warning(
+                body_layout,
+                "Certificat",
+                "Veuillez d'abord enregistrer la facture avant d'imprimer un certificat.",
+            )
+            return
+
         main_layout = body_layout.parent()
         if not hasattr(main_layout, "head_layout") or not hasattr(main_layout.head_layout, "form"):
             QMessageBox.warning(

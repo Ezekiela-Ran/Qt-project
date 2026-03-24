@@ -15,7 +15,7 @@ class FormTemplate(QWidget):
         self.responsable_input = QLineEdit()
         self.responsable_input.setObjectName("invoiceInput")
 
-        self.stat_label = QLabel("Statistic:")
+        self.stat_label = QLabel("Statistique :")
         self.stat_input = QLineEdit()
         self.stat_input.setObjectName("invoiceInput")
 

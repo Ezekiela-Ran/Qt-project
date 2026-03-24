@@ -6,6 +6,14 @@ from views.foundation.globals import GlobalVariable
 class PrintInvoiceAction:
     @staticmethod
     def execute(body_layout):
+        if not body_layout.current_invoice_id:
+            QMessageBox.warning(
+                body_layout,
+                "Impression impossible",
+                "Veuillez d'abord enregistrer la facture avant de l'imprimer.",
+            )
+            return
+
         main_layout = body_layout.parent()
         if not hasattr(main_layout, "head_layout") or not hasattr(main_layout.head_layout, "form"):
             QMessageBox.warning(
