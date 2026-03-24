@@ -14,7 +14,7 @@ class CertificateAction:
             QMessageBox.warning(
                 body_layout,
                 "Certificat",
-                "Veuillez d'abord enregistrer la facture avant d'imprimer un certificat.",
+                "Veuillez selectionner un enregistrement",
             )
             return
 
