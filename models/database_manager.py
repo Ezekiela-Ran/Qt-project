@@ -5,6 +5,11 @@ class DatabaseManager(Tables):
     table_name = ""
 
     @staticmethod
+    def _normalize_num_act(value):
+        text = str(value or "").strip()
+        return text or None
+
+    @staticmethod
     def _format_amount_for_display(value):
         try:
             amount = int(float(value or 0))
@@ -63,6 +68,19 @@ class DatabaseManager(Tables):
             self.cursor.execute("ALTER TABLE invoice_client ADD COLUMN ref_b_analyse INT NULL")
         except mysql.connector.Error as e:
             if e.errno not in (1060, 1061):
+                raise
+
+        try:
+            self.cursor.execute("ALTER TABLE invoice_client ADD COLUMN num_act VARCHAR(255) NULL")
+        except mysql.connector.Error as e:
+            if e.errno not in (1060, 1061):
+                raise
+
+        try:
+            self.cursor.execute("UPDATE products SET num_act = NULL WHERE num_act IS NOT NULL AND TRIM(num_act) IN ('', '0')")
+            self.cursor.execute("CREATE UNIQUE INDEX uk_products_num_act ON products(num_act)")
+        except mysql.connector.Error as e:
+            if e.errno not in (1061, 1062):
                 raise
 
     def fetch_all(self):
@@ -220,10 +238,11 @@ class DatabaseManager(Tables):
         self.cursor.execute("SELECT id, product_name, ref_b_analyse, num_act, physico, toxico, micro, subtotal FROM products WHERE product_type_id=%s", (type_id,))
         return self.cursor.fetchall()
     
-    def add_product(self, type_id, product_name, ref="0", num_act="0", physico="0", toxico="0", micro="0", subtotal="0"):
+    def add_product(self, type_id, product_name, ref="0", num_act=None, physico="0", toxico="0", micro="0", subtotal="0"):
+        normalized_num_act = self._normalize_num_act(num_act)
         self.cursor.execute(
             "INSERT INTO products (product_type_id, product_name, ref_b_analyse, num_act, physico, toxico, micro, subtotal) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (type_id, product_name, ref, num_act, physico, toxico, micro, subtotal)
+            (type_id, product_name, ref, normalized_num_act, physico, toxico, micro, subtotal)
         )
         self.conn.commit()
         return self.cursor.lastrowid
@@ -231,13 +250,32 @@ class DatabaseManager(Tables):
     def delete_product(self, product_id):
         self.cursor.execute("DELETE FROM products WHERE id=%s", (product_id,))
         self.conn.commit()
+
+    def is_num_act_unique(self, num_act, exclude_product_id=None):
+        normalized_num_act = self._normalize_num_act(num_act)
+        if normalized_num_act is None:
+            return True
+
+        cursor = self.conn.cursor()
+        try:
+            query = "SELECT COUNT(*) FROM products WHERE TRIM(num_act)=%s"
+            params = [normalized_num_act]
+            if exclude_product_id is not None:
+                query += " AND id != %s"
+                params.append(exclude_product_id)
+            cursor.execute(query, tuple(params))
+            row = cursor.fetchone()
+            return bool(row and row[0] == 0)
+        finally:
+            cursor.close()
     
     def update_product(self, product_id, ref, num_act, physico, toxico, micro, subtotal):
-        # Backwards-compatible update: always update numeric fields; update ref only when provided
+        # Backwards-compatible update: always update numeric fields; update ref only when provided.
+        # num_act is now persisted per invoice line (invoice_client), not in products.
         try:
             self.cursor.execute(
-                "UPDATE products SET num_act=%s, physico=%s, toxico=%s, micro=%s, subtotal=%s WHERE id=%s",
-                (num_act, physico, toxico, micro, subtotal, product_id)
+                "UPDATE products SET physico=%s, toxico=%s, micro=%s, subtotal=%s WHERE id=%s",
+                (physico, toxico, micro, subtotal, product_id)
             )
             # Update ref separately if needed
             if ref is not None:
@@ -249,7 +287,7 @@ class DatabaseManager(Tables):
             self.conn.commit()
         self.conn.commit()
     
-    def save_standard_invoice(self, company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, selected_products, selected_refs=None):
+    def save_standard_invoice(self, company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, selected_products, selected_refs=None, selected_num_acts=None):
         # Insérer la facture
         self.cursor.execute(
             "INSERT INTO standard_invoice (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
@@ -259,20 +297,22 @@ class DatabaseManager(Tables):
         
         # Insérer les produits sélectionnés
         selected_refs = selected_refs or {}
+        selected_num_acts = selected_num_acts or {}
         for product_id in selected_products:
             product = self.get_product_by_id(product_id)
             if product:
                 item_total = float(product['subtotal'] or 0)
                 ref_b_analyse = selected_refs.get(product_id)
+                num_act = self._normalize_num_act(selected_num_acts.get(product_id))
                 self.cursor.execute(
-                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (invoice_id, 'standard', product_id, ref_b_analyse, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (invoice_id, 'standard', product_id, ref_b_analyse, num_act, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
                 )
         
         self.conn.commit()
         return invoice_id
 
-    def update_standard_invoice(self, invoice_id, company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, selected_products, selected_refs=None):
+    def update_standard_invoice(self, invoice_id, company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, selected_products, selected_refs=None, selected_num_acts=None):
         self.cursor.execute(
             "UPDATE standard_invoice SET company_name=%s, stat=%s, nif=%s, address=%s, date_issue=%s, date_result=%s, product_ref=%s, resp=%s, total=%s WHERE id=%s",
             (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, invoice_id)
@@ -281,14 +321,16 @@ class DatabaseManager(Tables):
         # Mettre à jour les produits sélectionnés pour cette facture
         self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'standard'))
         selected_refs = selected_refs or {}
+        selected_num_acts = selected_num_acts or {}
         for product_id in selected_products:
             product = self.get_product_by_id(product_id)
             if product:
                 item_total = float(product['subtotal'] or 0)
                 ref_b_analyse = selected_refs.get(product_id)
+                num_act = self._normalize_num_act(selected_num_acts.get(product_id))
                 self.cursor.execute(
-                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (invoice_id, 'standard', product_id, ref_b_analyse, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (invoice_id, 'standard', product_id, ref_b_analyse, num_act, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
                 )
         self.conn.commit()
         return invoice_id
@@ -304,8 +346,8 @@ class DatabaseManager(Tables):
             if product:
                 item_total = float(product['subtotal'] or 0)
                 self.cursor.execute(
-                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (invoice_id, 'proforma', product_id, None, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (invoice_id, 'proforma', product_id, None, None, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
                 )
         self.conn.commit()
         return invoice_id
@@ -324,8 +366,8 @@ class DatabaseManager(Tables):
             if product:
                 item_total = float(product['subtotal'] or 0)
                 self.cursor.execute(
-                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (invoice_id, 'proforma', product_id, None, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (invoice_id, 'proforma', product_id, None, None, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
                 )
         
         self.conn.commit()
@@ -334,7 +376,7 @@ class DatabaseManager(Tables):
     def get_product_by_id(self, product_id):
         cursor = self.conn.cursor(dictionary=True)
         try:
-            cursor.execute("SELECT product_name, ref_b_analyse, physico, micro, toxico, subtotal FROM products WHERE id=%s", (product_id,))
+            cursor.execute("SELECT product_name, ref_b_analyse, num_act, physico, micro, toxico, subtotal FROM products WHERE id=%s", (product_id,))
             return cursor.fetchone()
         finally:
             cursor.close()
@@ -359,7 +401,7 @@ class DatabaseManager(Tables):
 
     def get_invoice_items_with_refs(self, invoice_id, invoice_type):
         self.cursor.execute(
-            "SELECT product_id, ref_b_analyse FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s ORDER BY id ASC",
+            "SELECT product_id, ref_b_analyse, num_act FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s ORDER BY id ASC",
             (invoice_id, invoice_type),
         )
         return self.cursor.fetchall()

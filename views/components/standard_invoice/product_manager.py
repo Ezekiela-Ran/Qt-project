@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (
-    QListWidgetItem, QTableWidgetItem, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QTableWidget, QAbstractItemView, QLineEdit, QLabel, QInputDialog, 
+    QListWidgetItem, QTableWidgetItem, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QTableWidget, QAbstractItemView, QLineEdit, QLabel, QInputDialog, QMessageBox,
 )
 from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, Signal
@@ -16,6 +16,8 @@ class ProductManager(QWidget):
         self.selected_products = {}  # dictionnaire {pid: True/False}
         self.selection_order = []  # ordre de sélection pour numéroter dynamiquement
         self.selected_refs = {}  # dictionnaire {pid: ref_b_analyse} pour standard
+        self.selected_num_acts = {}  # dictionnaire {pid: num_act} pour standard
+        self.loaded_record_locked = False
 
 
         # cadre principale
@@ -112,13 +114,15 @@ class ProductManager(QWidget):
             QMessageBox.warning(self, "Suppression impossible", str(e))
 
     def add_product(self):
+        if self.loaded_record_locked:
+            return
         if not self.type_list.currentItem():
             return
         tid = self.type_list.currentItem().data(Qt.UserRole)
         name, ok = QInputDialog.getText(self, "Nouveau Produit", "Nom du produit:")
         if ok and name:
             pid = self.product_service.add_product(tid, name)
-            self.add_product_row(pid, name, "0", "0", "0", "0", "0", "0")
+            self.add_product_row(pid, name, "0", "", "0", "0", "0", "0")
 
     def add_product_row(self, pid, name, ref, num_act, physico, toxico, micro, subtotal):
         row = self.product_table.rowCount()
@@ -130,7 +134,7 @@ class ProductManager(QWidget):
         if self.invoice_type == "standard":
             ref_edit = QLineEdit(str(ref)); ref_edit.setReadOnly(True)
             self.product_table.setCellWidget(row, 1, ref_edit)
-            num_act_edit = QLineEdit(str(num_act)); num_act_edit.setReadOnly(True)
+            num_act_edit = QLineEdit(self._display_num_act(num_act)); num_act_edit.setReadOnly(True)
             physico_edit = QLineEdit(self.format_number(physico)); physico_edit.setReadOnly(True)
             toxico_edit = QLineEdit(self.format_number(toxico)); toxico_edit.setReadOnly(True)
             micro_edit = QLineEdit(self.format_number(micro)); micro_edit.setReadOnly(True)
@@ -193,13 +197,20 @@ class ProductManager(QWidget):
         self.product_table.setCellWidget(row, btn_mod_col, btn_mod)
         self.product_table.setCellWidget(row, btn_sel_col, btn_sel)
 
-        btn_del.clicked.connect(lambda: self.product_service.delete_product(pid) or self.product_table.removeRow(row))
+        btn_del.clicked.connect(lambda: self.delete_product_row(pid, row))
         btn_mod.clicked.connect(lambda: self.toggle_edit(row))
         btn_sel.clicked.connect(lambda: self.toggle_select(pid, row))
+
+        btn_del.setEnabled(not self.loaded_record_locked)
+        btn_sel.setEnabled(not self.loaded_record_locked)
 
         # Réappliquer style si déjà sélectionné
         if pid in self.selected_products and self.selected_products[pid]:
             btn_sel.setText("Annuler")
+            if self.invoice_type == "standard":
+                selected_num_act = self.selected_num_acts.get(pid)
+                if selected_num_act is not None:
+                    num_act_edit.setText(selected_num_act)
             self.apply_selection_style(row)
 
     def toggle_edit(self, row):
@@ -230,6 +241,9 @@ class ProductManager(QWidget):
             self.product_table.cellWidget(row, focus_col).setFocus()
         else:
             # Save edit
+            if self.invoice_type == "standard" and not self.validate_num_act_row(row):
+                self.product_table.cellWidget(row, 2).setFocus()
+                return
             btn.setText("Modifier")
             self.on_price_component_changed(row)
             for col in amount_cols:
@@ -254,6 +268,55 @@ class ProductManager(QWidget):
             return float(cleaned)
         except (TypeError, ValueError):
             return 0.0
+
+    def _display_num_act(self, value):
+        if value is None:
+            return ""
+        text = str(value).strip()
+        if text.lower() == "none":
+            return ""
+        return text
+
+    def _normalize_num_act(self, value):
+        text = str(value or "").strip()
+        return text or None
+
+    def validate_num_act_row(self, row):
+        if self.invoice_type != "standard":
+            return True
+        num_act_widget = self.product_table.cellWidget(row, 2)
+        if num_act_widget is None:
+            return True
+
+        num_act = self._normalize_num_act(num_act_widget.text())
+        num_act_widget.setText(num_act or "")
+        return False
+
+    def set_loaded_record_locked(self, locked):
+        self.loaded_record_locked = bool(locked)
+        self.add_product_btn.setEnabled(not self.loaded_record_locked)
+        for row in range(self.product_table.rowCount()):
+            self._update_row_action_state(row)
+
+    def _update_row_action_state(self, row):
+        if self.invoice_type == "standard":
+            btn_del_col = 7
+            btn_sel_col = 9
+        else:
+            btn_del_col = 5
+            btn_sel_col = 7
+        btn_del = self.product_table.cellWidget(row, btn_del_col)
+        btn_sel = self.product_table.cellWidget(row, btn_sel_col)
+        if btn_del:
+            btn_del.setEnabled(not self.loaded_record_locked)
+        if btn_sel:
+            btn_sel.setEnabled(not self.loaded_record_locked)
+
+    def delete_product_row(self, pid, row):
+        if self.loaded_record_locked:
+            return
+        self.product_service.delete_product(pid)
+        self.product_table.removeRow(row)
 
     def on_price_component_changed(self, row):
         if self.invoice_type == "standard":
@@ -287,13 +350,15 @@ class ProductManager(QWidget):
         pid = self.product_table.item(row, 0).data(Qt.UserRole)
         if self.invoice_type == "standard":
             ref = int(self.parse_number(self.product_table.cellWidget(row, 1).text()))
-            num_act = self.product_table.cellWidget(row, 2).text()
+            num_act = self._normalize_num_act(self.product_table.cellWidget(row, 2).text())
+            if self.selected_products.get(pid, False):
+                self.selected_num_acts[pid] = num_act
         else:
             ref = 0  # Not used for proforma
             num_act = ""  # Not used for proforma
 
         # Persist numeric components but DO NOT change ref here (ref is managed in-memory until save)
-        self.product_service.update_product(pid, ref, num_act,
+        self.product_service.update_product(pid, ref, None,
                        int(physico),
                        int(toxico),
                        int(micro),
@@ -301,6 +366,8 @@ class ProductManager(QWidget):
                        update_ref=False)
 
     def toggle_select(self, pid, row):
+        if self.loaded_record_locked:
+            return
         btn_col = 9 if self.invoice_type == "standard" else 7
         btn = self.product_table.cellWidget(row, btn_col)
         currently_selected = bool(self.selected_products.get(pid, False))
@@ -318,6 +385,9 @@ class ProductManager(QWidget):
                 except Exception:
                     next_ref = int(self.product_service.get_max_ref_b_analyse() or 0) + 1
                 self.selected_refs[pid] = next_ref
+                num_act_widget = self.product_table.cellWidget(row, 2)
+                current_num_act = self._normalize_num_act(num_act_widget.text() if num_act_widget else "")
+                self.selected_num_acts[pid] = current_num_act
             self.apply_selection_style(row)
         else:
             # Deselect: unmark and remove from order
@@ -328,6 +398,8 @@ class ProductManager(QWidget):
                 self.selection_order.remove(pid)
             if pid in self.selected_refs:
                 del self.selected_refs[pid]
+            if pid in self.selected_num_acts:
+                del self.selected_num_acts[pid]
             self.clear_selection_style(row)
 
         # Refresh displayed refs for standard rows according to selected_refs mapping
@@ -423,25 +495,27 @@ class ProductManager(QWidget):
             if hasattr(form, 'date_input'):
                 form.date_input.setEnabled(True)
 
-    def select_products(self, product_ids, ref_mapping=None):
+    def select_products(self, product_ids, ref_mapping=None, num_act_mapping=None):
         # Select given products and maintain selection order.
         # For standard invoices, ref_mapping can restore previously saved refs.
         ref_mapping = ref_mapping or {}
+        num_act_mapping = num_act_mapping or {}
         for pid in product_ids:
-            if self.selected_products.get(pid, False):
-                continue
-            self.selected_products[pid] = True
-            if pid not in self.selection_order:
-                self.selection_order.append(pid)
+            already_selected = self.selected_products.get(pid, False)
+            if not already_selected:
+                self.selected_products[pid] = True
+                if pid not in self.selection_order:
+                    self.selection_order.append(pid)
             if self.invoice_type == "standard":
                 existing_ref = ref_mapping.get(pid)
-                if existing_ref:
+                if existing_ref is not None:
                     self.selected_refs[pid] = int(existing_ref)
-                else:
+                elif not already_selected:
                     try:
                         self.selected_refs[pid] = int(self.product_service.allocate_next_ref_b_analyse())
                     except Exception:
                         self.selected_refs[pid] = int(self.product_service.get_max_ref_b_analyse() or 0) + 1
+                self.selected_num_acts[pid] = self._normalize_num_act(num_act_mapping.get(pid))
             # Trouver la ligne et appliquer la sélection UI
             for row in range(self.product_table.rowCount()):
                 row_item = self.product_table.item(row, 0)
@@ -449,6 +523,10 @@ class ProductManager(QWidget):
                     continue
                 item_pid = row_item.data(Qt.UserRole)
                 if item_pid == pid:
+                    if self.invoice_type == "standard":
+                        num_act_widget = self.product_table.cellWidget(row, 2)
+                        if num_act_widget is not None:
+                            num_act_widget.setText(self.selected_num_acts.get(pid) or "")
                     btn_col = 9 if self.invoice_type == "standard" else 7
                     btn = self.product_table.cellWidget(row, btn_col)
                     if btn:
@@ -477,33 +555,34 @@ class ProductManager(QWidget):
                 pid = product['id']
                 name = product['product_name']
                 ref = product['ref_b_analyse']
-                num_act = product['num_act']
+                num_act = ""
                 physico = product['physico']
                 toxico = product['toxico']
                 micro = product['micro']
                 subtotal = product['subtotal']
                 self.add_product_row(pid, name, ref, num_act, physico, toxico, micro, subtotal)
+        for row in range(self.product_table.rowCount()):
+            self._update_row_action_state(row)
 
     def clear_selection(self):
-        # Désélectionner tous les produits sélectionnés
-        for pid, selected in list(self.selected_products.items()):
-            if selected:
-                # Trouver la ligne correspondante
-                for row in range(self.product_table.rowCount()):
-                    item_pid = self.product_table.item(row, 0)
-                    if item_pid and item_pid.data(Qt.UserRole) == pid:
-                        btn_col = 9 if self.invoice_type == "standard" else 7
-                        btn = self.product_table.cellWidget(row, btn_col)
-                        if btn:
-                            btn.setText("Select")
-                        if pid in self.selected_refs:
-                            del self.selected_refs[pid]
-                        self.selected_products[pid] = False
-                        self.clear_selection_style(row)
-                        # also remove from selection order
-                        if pid in self.selection_order:
-                            self.selection_order.remove(pid)
-                        break
+        self.set_loaded_record_locked(False)
+        # Réinitialiser l'état mémoire même si certaines lignes ne sont pas visibles
+        self.selected_products.clear()
+        self.selection_order.clear()
+        self.selected_refs.clear()
+        self.selected_num_acts.clear()
+
+        # Nettoyer l'UI des lignes visibles
+        for row in range(self.product_table.rowCount()):
+            btn_col = 9 if self.invoice_type == "standard" else 7
+            btn = self.product_table.cellWidget(row, btn_col)
+            if btn:
+                btn.setText("Select")
+            self.clear_selection_style(row)
+            if self.invoice_type == "standard":
+                num_act_widget = self.product_table.cellWidget(row, 2)
+                if num_act_widget:
+                    num_act_widget.setText("")
         self.enable_form_fields()
         # Renumber UI refs to reflect cleared selections
         self._renumber_selection_ui()
@@ -514,6 +593,25 @@ class ProductManager(QWidget):
             return {}
         selected_set = {pid for pid, selected in self.selected_products.items() if selected}
         return {pid: ref for pid, ref in self.selected_refs.items() if pid in selected_set}
+
+    def get_selected_num_act_mapping(self):
+        if self.invoice_type != "standard":
+            return {}
+        selected_set = {pid for pid, selected in self.selected_products.items() if selected}
+
+        for row in range(self.product_table.rowCount()):
+            item = self.product_table.item(row, 0)
+            if not item:
+                continue
+            pid = item.data(Qt.UserRole)
+            if pid not in selected_set:
+                continue
+            num_act_widget = self.product_table.cellWidget(row, 2)
+            if num_act_widget is None:
+                continue
+            self.selected_num_acts[pid] = self._normalize_num_act(num_act_widget.text())
+
+        return {pid: self._normalize_num_act(num_act) for pid, num_act in self.selected_num_acts.items() if pid in selected_set}
 
     def _apply_stylesheet(self, stylesheet_path):
         try:

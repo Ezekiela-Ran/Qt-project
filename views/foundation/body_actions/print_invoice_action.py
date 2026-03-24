@@ -33,6 +33,7 @@ class PrintInvoiceAction:
         if not ordered_selected:
             ordered_selected = [pid for pid in selected_products]
         ref_mapping = pm.get_selected_ref_mapping()
+        num_act_mapping = pm.get_selected_num_act_mapping()
 
         html = body_layout.invoice_printer.generate_invoice_html(
             form,
@@ -40,5 +41,6 @@ class PrintInvoiceAction:
             ordered_selected,
             body_layout.db_manager,
             ref_mapping=ref_mapping,
+            num_act_mapping=num_act_mapping,
         )
         body_layout.invoice_printer.print_invoice(html)

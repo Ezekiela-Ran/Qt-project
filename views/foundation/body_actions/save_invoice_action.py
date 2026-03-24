@@ -50,6 +50,7 @@ class SaveInvoiceAction:
 
         pm = body_layout.product_manager
         selected_refs = pm.get_selected_ref_mapping() if GlobalVariable.invoice_type == "standard" else {}
+        selected_num_acts = pm.get_selected_num_act_mapping() if GlobalVariable.invoice_type == "standard" else {}
         if GlobalVariable.invoice_type == "standard":
             for pid in selected_products:
                 if pid not in selected_refs:
@@ -58,6 +59,23 @@ class SaveInvoiceAction:
                     errors.append(
                         f"Ref.b.analyse manquant pour le produit {product_name}. Désélectionnez puis resélectionnez le produit."
                     )
+
+            seen_num_act = {}
+            for pid in selected_products:
+                num_act = selected_num_acts.get(pid)
+                if num_act is None:
+                    continue
+                if num_act in seen_num_act:
+                    first_pid = seen_num_act[num_act]
+                    first_product = body_layout.product_service.get_product_by_id(first_pid)
+                    second_product = body_layout.product_service.get_product_by_id(pid)
+                    first_name = first_product["product_name"] if first_product else str(first_pid)
+                    second_name = second_product["product_name"] if second_product else str(pid)
+                    errors.append(
+                        f"N°Acte dupliqué dans la facture: '{num_act}' est utilisé pour {first_name} et {second_name}."
+                    )
+                else:
+                    seen_num_act[num_act] = pid
 
         if errors:
             msg = QMessageBox()
@@ -89,6 +107,7 @@ class SaveInvoiceAction:
                     total,
                     selected_products,
                     selected_refs,
+                    selected_num_acts,
                 )
             else:
                 invoice_id = body_layout.invoice_service.save_standard_invoice(
@@ -103,6 +122,7 @@ class SaveInvoiceAction:
                     total,
                     selected_products,
                     selected_refs,
+                    selected_num_acts,
                 )
 
             if hasattr(form, "standard_invoice_number"):

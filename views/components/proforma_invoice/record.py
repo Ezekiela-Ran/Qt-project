@@ -39,6 +39,7 @@ class ProformaInvoiceRecord(QtWidgets.QWidget):
             # Sélectionner les produits
             selected_products = self.proformainvoice.get_invoice_items(invoice_id, 'proforma')
             self.parent().parent().body_layout.product_manager.select_products(selected_products)
+            self.parent().parent().body_layout.product_manager.set_loaded_record_locked(True)
             
             # Mettre à jour le total
             self.parent().parent().body_layout.update_total_display()

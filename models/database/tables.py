@@ -62,6 +62,7 @@ class Tables:
             toxico INT,
             subtotal INT,
             product_type_id INT NOT NULL,
+            UNIQUE KEY uk_products_num_act (num_act),
             FOREIGN KEY (product_type_id)
             REFERENCES product_type(id)
             ON DELETE CASCADE
@@ -76,6 +77,7 @@ class Tables:
             invoice_type ENUM('standard', 'proforma') NOT NULL,
             product_id INT NOT NULL,
             ref_b_analyse INT NULL,
+            num_act VARCHAR(255) NULL,
             quantity INT DEFAULT 1,
             physico DECIMAL(10,2) DEFAULT 0,
             micro DECIMAL(10,2) DEFAULT 0,

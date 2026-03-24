@@ -19,6 +19,9 @@ class ProductService:
     def add_product(self, type_id, name):
         return self.db.add_product(type_id, name)
 
+    def is_num_act_unique(self, num_act, exclude_product_id=None):
+        return self.db.is_num_act_unique(num_act, exclude_product_id=exclude_product_id)
+
     def update_product(self, pid, ref, num_act, physico, toxico, micro, subtotal, update_ref=True):
         # If update_ref is False, pass None for ref so DB method won't change it
         ref_value = ref if update_ref else None

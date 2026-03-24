@@ -54,7 +54,13 @@ class StandardInvoiceRecord(QtWidgets.QWidget):
                 for row in selected_items
                 if row.get('ref_b_analyse') is not None
             }
-            self.parent().parent().body_layout.product_manager.select_products(selected_products, ref_mapping=ref_mapping)
+            num_act_mapping = {
+                row['product_id']: row.get('num_act')
+                for row in selected_items
+                if row.get('num_act') is not None and str(row.get('num_act')).strip() != ''
+            }
+            self.parent().parent().body_layout.product_manager.select_products(selected_products, ref_mapping=ref_mapping, num_act_mapping=num_act_mapping)
+            self.parent().parent().body_layout.product_manager.set_loaded_record_locked(True)
             
             # Mettre à jour le total
             self.parent().parent().body_layout.update_total_display()
