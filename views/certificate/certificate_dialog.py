@@ -7,9 +7,9 @@ apparaîtront dans le modèle de certificat imprimé.
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QCheckBox, QWidget, QAbstractItemView, QLabel, QHeaderView,
-    QMessageBox, QLineEdit,
+    QMessageBox, QLineEdit, QDateEdit,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QColor
 
 from views.certificate.certificate_printer import CertificatePrinter
@@ -22,10 +22,16 @@ _COL_QTE            = 1
 _COL_QTE_ANALYSEE   = 2
 _COL_NUM_LOT        = 3
 _COL_NUM_ACTE       = 4
-_COL_CC             = 5
-_COL_CNC            = 6
-_COL_IMPRIMER       = 7
-_COL_COUNT          = 8
+_COL_NUM_CERT       = 5
+_COL_CLASSE         = 6
+_COL_DATE_PROD      = 7
+_COL_DATE_PEREMP    = 8
+_COL_NUM_PRELEV     = 9
+_COL_DATE_PV        = 10
+_COL_CC             = 11
+_COL_CNC            = 12
+_COL_IMPRIMER       = 13
+_COL_COUNT          = 14
 
 _HEADERS = [
     "Désignation",
@@ -33,6 +39,12 @@ _HEADERS = [
     "Qté Analysée",
     "N° Lot",
     "N° Acte",
+    "N° Cert",
+    "Classe",
+    "Date Prod.",
+    "Date Péremp.",
+    "N° Prélèvement",
+    "Date PV",
     "CC",
     "CNC",
     "Imprimer",
@@ -96,7 +108,18 @@ class CertificateDialog(QDialog):
 
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(_COL_DESIGNATION, QHeaderView.Stretch)
-        for col in (_COL_QTE, _COL_QTE_ANALYSEE, _COL_NUM_LOT, _COL_NUM_ACTE):
+        for col in (
+            _COL_QTE,
+            _COL_QTE_ANALYSEE,
+            _COL_NUM_LOT,
+            _COL_NUM_ACTE,
+            _COL_NUM_CERT,
+            _COL_CLASSE,
+            _COL_DATE_PROD,
+            _COL_DATE_PEREMP,
+            _COL_NUM_PRELEV,
+            _COL_DATE_PV,
+        ):
             hdr.setSectionResizeMode(col, QHeaderView.Interactive)
             self._table.setColumnWidth(col, 110)
         hdr.setSectionResizeMode(_COL_CC, QHeaderView.ResizeToContents)
@@ -125,11 +148,23 @@ class CertificateDialog(QDialog):
         qty_analysee_edit = QLineEdit(); qty_analysee_edit.setPlaceholderText("ex: 10 kg")
         num_lot_edit     = QLineEdit(); num_lot_edit.setPlaceholderText("N° Lot")
         num_acte_edit    = QLineEdit(num_acte); num_acte_edit.setPlaceholderText("N° Acte")
+        num_cert_edit    = QLineEdit(); num_cert_edit.setPlaceholderText("N° Cert")
+        classe_edit      = QLineEdit(); classe_edit.setPlaceholderText("Classe")
+        date_prod_edit   = self._make_date_edit()
+        date_peremp_edit = self._make_date_edit()
+        num_prelev_edit  = QLineEdit(); num_prelev_edit.setPlaceholderText("N° Prélèvement")
+        date_pv_edit     = self._make_date_edit()
 
         self._table.setCellWidget(row_index, _COL_QTE,            qty_edit)
         self._table.setCellWidget(row_index, _COL_QTE_ANALYSEE,   qty_analysee_edit)
         self._table.setCellWidget(row_index, _COL_NUM_LOT,        num_lot_edit)
         self._table.setCellWidget(row_index, _COL_NUM_ACTE,       num_acte_edit)
+        self._table.setCellWidget(row_index, _COL_NUM_CERT,       num_cert_edit)
+        self._table.setCellWidget(row_index, _COL_CLASSE,         classe_edit)
+        self._table.setCellWidget(row_index, _COL_DATE_PROD,      date_prod_edit)
+        self._table.setCellWidget(row_index, _COL_DATE_PEREMP,    date_peremp_edit)
+        self._table.setCellWidget(row_index, _COL_NUM_PRELEV,     num_prelev_edit)
+        self._table.setCellWidget(row_index, _COL_DATE_PV,        date_pv_edit)
 
         cc_container  = self._make_centered_checkbox()
         cnc_container = self._make_centered_checkbox()
@@ -153,6 +188,12 @@ class CertificateDialog(QDialog):
             "qty_analysee_edit": qty_analysee_edit,
             "num_lot_edit":     num_lot_edit,
             "num_acte_edit":    num_acte_edit,
+            "num_cert_edit":    num_cert_edit,
+            "classe_edit":      classe_edit,
+            "date_prod_edit":   date_prod_edit,
+            "date_peremp_edit": date_peremp_edit,
+            "num_prelev_edit":  num_prelev_edit,
+            "date_pv_edit":     date_pv_edit,
             "btn_print":        btn_print,
         })
 
@@ -165,6 +206,14 @@ class CertificateDialog(QDialog):
         lay.addWidget(QCheckBox())
         return container
 
+    @staticmethod
+    def _make_date_edit() -> QDateEdit:
+        edit = QDateEdit()
+        edit.setCalendarPopup(True)
+        edit.setDisplayFormat("dd/MM/yyyy")
+        edit.setDate(QDate.currentDate())
+        return edit
+
     # ------------------------------------------------------------------
     # Logique d'impression par ligne
     # ------------------------------------------------------------------
@@ -176,8 +225,38 @@ class CertificateDialog(QDialog):
             "quantite_analysee": r["qty_analysee_edit"].text().strip(),
             "num_lot":           r["num_lot_edit"].text().strip(),
             "num_acte":          r["num_acte_edit"].text().strip(),
+            "num_cert":          r["num_cert_edit"].text().strip(),
+            "classe":            r["classe_edit"].text().strip(),
+            "date_production":   r["date_prod_edit"].date().toString("dd/MM/yyyy"),
+            "date_peremption":   r["date_peremp_edit"].date().toString("dd/MM/yyyy"),
+            "num_prelevement":   r["num_prelev_edit"].text().strip(),
+            "date_pv":           r["date_pv_edit"].date().toString("dd/MM/yyyy"),
             "analyse":           self._build_analyse_text(r["pid"]),
         }
+
+    def _validate_required_fields(self, row_index: int) -> bool:
+        r = self._rows[row_index]
+        required_fields = [
+            ("Quantité", r["qty_edit"].text().strip(), r["qty_edit"]),
+            ("Qté Analysée", r["qty_analysee_edit"].text().strip(), r["qty_analysee_edit"]),
+            ("N° Lot", r["num_lot_edit"].text().strip(), r["num_lot_edit"]),
+            ("N° Cert", r["num_cert_edit"].text().strip(), r["num_cert_edit"]),
+            ("Classe", r["classe_edit"].text().strip(), r["classe_edit"]),
+            ("N° Prélèvement", r["num_prelev_edit"].text().strip(), r["num_prelev_edit"]),
+        ]
+
+        for label, value, widget in required_fields:
+            if value:
+                continue
+            QMessageBox.warning(
+                self,
+                "Champ obligatoire",
+                f"Le champ « {label} » est obligatoire pour « {r['name']} ».",
+            )
+            widget.setFocus()
+            return False
+
+        return True
 
     def _build_analyse_text(self, pid) -> str:
         """Construit la ligne Analyse selon les composantes non nulles (> 0 Ar)."""
@@ -243,6 +322,9 @@ class CertificateDialog(QDialog):
                 "Type manquant",
                 f"Veuillez sélectionner CC ou CNC pour « {r['name']} ».",
             )
+            return
+
+        if not self._validate_required_fields(row_index):
             return
 
         extras = self._row_extras(row_index)

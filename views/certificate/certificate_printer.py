@@ -5,13 +5,17 @@ Chaque certificat occupe une page A4 portrait.
 L'impression utilise QPrinter / QPrintDialog (même approche que InvoicePrinter).
 """
 from datetime import date
+import os
 from pathlib import Path
+import tempfile
 from html import escape
+from urllib.parse import unquote, urlparse
 
-from PySide6.QtGui import QTextDocument, QPageSize, QPageLayout
-from PySide6.QtCore import QMarginsF
+from PySide6.QtCore import QSize, Qt, QRectF
+from PySide6.QtGui import QTextDocument, QPainter, QPageSize, QPageLayout
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtPdf import QPdfDocument
 
 
 _TITLES = {
@@ -44,6 +48,20 @@ class CertificatePrinter:
         key: path.as_uri() if path.exists() else ""
         for key, path in mapping.items()
       }
+
+    @staticmethod
+    def _uri_to_local_path(path_or_uri: str) -> str:
+      text = str(path_or_uri or "").strip()
+      if not text:
+        return ""
+      if not text.startswith("file://"):
+        return text
+
+      parsed = urlparse(text)
+      local_path = unquote(parsed.path or "")
+      if local_path.startswith("/") and len(local_path) > 2 and local_path[2] == ":":
+        local_path = local_path[1:]
+      return local_path
 
     def _load_css(self) -> str:
         try:
@@ -117,13 +135,25 @@ class CertificatePrinter:
         classe            = escape(extras.get("classe", ""))
         date_production   = escape(extras.get("date_production", ""))
         date_peremption   = escape(extras.get("date_peremption", ""))
-        proces_verbal     = escape(extras.get("proces_verbal", ""))
+        num_cert          = escape(extras.get("num_cert", ""))
+        num_prelevement   = escape(extras.get("num_prelevement", ""))
+        date_pv           = escape(extras.get("date_pv", ""))
         reference         = escape(extras.get("reference", ""))
 
         analyse_sentence = self._build_analysis_sentence(analyse_raw)
         result_text = "consommable" if cert_type == "CC" else "non consommable"
         year_two_digits = date.today().strftime("%y")
         header_number = f"N°/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
+        if num_cert:
+          header_number = f"N°{num_cert}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
+
+        proces_verbal = ""
+        if num_prelevement and date_pv:
+          proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
+        elif num_prelevement:
+          proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
+        elif date_pv:
+          proces_verbal = date_pv
 
         if not reference:
             reference = f"N°/{year_two_digits}/{num_acte}"
@@ -293,8 +323,7 @@ class CertificatePrinter:
 
             def get_logo(path_key):
                 path = logos.get(path_key, "")
-                if path and path.startswith("file://"):
-                    path = path[7:]
+                path = self._uri_to_local_path(path)
 
                 if path and Path(path).exists():
                     img = Image(path)
@@ -357,6 +386,19 @@ class CertificatePrinter:
             story.append(Spacer(1, 10))
             year_two_digits = date.today().strftime("%y")
             header_number = f"N°/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
+            if extras.get("num_cert", ""):
+              header_number = f"N°{extras.get('num_cert')}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
+
+            proces_verbal = extras.get("proces_verbal", "")
+            if not proces_verbal:
+              num_prelevement = str(extras.get("num_prelevement", "") or "").strip()
+              date_pv = str(extras.get("date_pv", "") or "").strip()
+              if num_prelevement and date_pv:
+                proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
+              elif num_prelevement:
+                proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
+              elif date_pv:
+                proces_verbal = date_pv
 
             title_table = Table(
                 [
@@ -428,18 +470,49 @@ class CertificatePrinter:
         except Exception:
             raise
 
+    def _print_pdf_to_printer(self, pdf_path: str, printer: QPrinter):
+        document = QPdfDocument(self.parent)
+        document.load(pdf_path)
+        if document.status() != QPdfDocument.Status.Ready or document.pageCount() == 0:
+            raise RuntimeError("Impossible de charger le PDF généré pour l'impression.")
+
+        painter = QPainter(printer)
+        if not painter.isActive():
+            raise RuntimeError("Impossible d'initialiser l'impression sur le périphérique sélectionné.")
+
+        try:
+            # Use device pixels for both rendering and drawing. Using typographic points
+            # on a high-DPI printer shrinks the output into the top-left corner.
+            page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+            target_width = max(1, int(page_rect.width()))
+            target_height = max(1, int(page_rect.height()))
+
+            for page_index in range(document.pageCount()):
+                if page_index > 0:
+                    printer.newPage()
+
+                image = document.render(page_index, QSize(target_width, target_height))
+                if image.isNull():
+                    raise RuntimeError(f"Impossible de rendre la page {page_index + 1} du certificat.")
+
+                scaled_size = image.size()
+                scaled_size.scale(target_width, target_height, Qt.AspectRatioMode.KeepAspectRatio)
+                draw_x = page_rect.x() + (page_rect.width() - scaled_size.width()) / 2
+                draw_y = page_rect.y() + (page_rect.height() - scaled_size.height()) / 2
+                target_rect = QRectF(draw_x, draw_y, scaled_size.width(), scaled_size.height())
+                painter.drawImage(target_rect, image)
+        finally:
+            painter.end()
+
     # ------------------------------------------------------------------
     # Impression
     # ------------------------------------------------------------------
 
     def print_certificates(self, form, assignments: list[tuple]):
-        """Ouvre les options d'impression et imprime le certificat sur le périphérique choisi."""
-        html = self.generate_html(form, assignments)
-        document = self._build_document(html)
+        """Imprime avec choix du périphérique tout en conservant le rendu ReportLab identique sur tous les OS."""
         printer = QPrinter(QPrinter.HighResolution)
         printer.setPageSize(QPageSize(QPageSize.A4))
         printer.setPageOrientation(QPageLayout.Portrait)
-        printer.setPageMargins(QMarginsF(6, 6, 6, 6), QPageLayout.Millimeter)
 
         dialog = QPrintDialog(printer, self.parent)
         dialog.setWindowTitle("Imprimer le certificat")
@@ -447,31 +520,39 @@ class CertificatePrinter:
             return
 
         try:
-            if printer.outputFormat() == QPrinter.OutputFormat.PdfFormat and not printer.outputFileName():
-                default_name = f"certificat_{date.today().strftime('%Y%m%d')}.pdf"
-                file_path, _ = QFileDialog.getSaveFileName(
-                    self.parent,
-                    "Enregistrer le certificat en PDF",
-                    default_name,
-                    "PDF Files (*.pdf)",
-                )
+            if printer.outputFormat() == QPrinter.OutputFormat.PdfFormat:
+                file_path = printer.outputFileName()
                 if not file_path:
-                    return
+                    default_name = f"certificat_{date.today().strftime('%Y%m%d')}.pdf"
+                    file_path, _ = QFileDialog.getSaveFileName(
+                        self.parent,
+                        "Enregistrer le certificat en PDF",
+                        default_name,
+                        "PDF Files (*.pdf)",
+                    )
+                    if not file_path:
+                        return
                 if not file_path.lower().endswith('.pdf'):
                     file_path += '.pdf'
-                printer.setOutputFileName(file_path)
 
-            if printer.outputFormat() == QPrinter.OutputFormat.PdfFormat and printer.outputFileName():
-                self._generate_pdf_with_reportlab(form, assignments, printer.outputFileName())
+                self._generate_pdf_with_reportlab(form, assignments, file_path)
                 QMessageBox.information(
                     self.parent,
                     "PDF enregistré",
-                    f"Certificat enregistré dans :\n{printer.outputFileName()}",
+                    f"Certificat enregistré dans :\n{file_path}",
                 )
                 return
 
-            page_rect = printer.pageRect(QPrinter.Unit.Point)
-            document.setPageSize(page_rect.size())
-            document.print_(printer)
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                tmp_path = tmp_file.name
+
+            try:
+                self._generate_pdf_with_reportlab(form, assignments, tmp_path)
+                self._print_pdf_to_printer(tmp_path, printer)
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
         except Exception as e:
             QMessageBox.critical(self.parent, "Erreur", f"Erreur lors de l'impression du certificat : {e}")

@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QListWidgetItem, QTableWidgetItem, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QTableWidget, QAbstractItemView, QLineEdit, QLabel, QInputDialog, QMessageBox,
 )
-from PySide6.QtGui import QIntValidator
+from PySide6.QtGui import QIntValidator, QColor
 from PySide6.QtCore import Qt, Signal
 
 
@@ -538,7 +538,8 @@ class ProductManager(QWidget):
         for col in range(self.product_table.columnCount()):
             item = self.product_table.item(row, col)
             if item:
-                item.setBackground(Qt.green)
+                item.setBackground(QColor("#2F5A8F"))
+                item.setForeground(QColor("white"))
         if self.invoice_type == "standard":
             editable_cols = [1, 2, 3, 4, 5]
         else:
@@ -555,6 +556,7 @@ class ProductManager(QWidget):
             item = self.product_table.item(row, col)
             if item:
                 item.setBackground(Qt.white)
+                item.setForeground(QColor("black"))
         if self.invoice_type == "standard":
             editable_cols = [1, 2, 3, 4, 5]
         else:
