@@ -16,6 +16,7 @@ from PySide6.QtGui import QTextDocument, QPainter, QPageSize, QPageLayout
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 from PySide6.QtPdf import QPdfDocument
+from utils.path_utils import resolve_resource_path
 
 
 _TITLES = {
@@ -38,34 +39,33 @@ class CertificatePrinter:
     # ------------------------------------------------------------------
 
     def _resolve_logo_sources(self) -> dict:
-      base = Path(__file__).resolve().parent.parent.parent / "images"
-      mapping = {
-        "left": base / "unnamed.png",
-        "center": base / "unnamed-1.png",
-        "right": base / "image.png",
-      }
-      return {
-        key: path.as_uri() if path.exists() else ""
-        for key, path in mapping.items()
-      }
+        mapping = {
+            "left": resolve_resource_path("images/unnamed.png"),
+            "center": resolve_resource_path("images/unnamed-1.png"),
+            "right": resolve_resource_path("images/image.png"),
+        }
+        return {
+            key: path.as_uri() if path.exists() else ""
+            for key, path in mapping.items()
+        }
 
     @staticmethod
     def _uri_to_local_path(path_or_uri: str) -> str:
-      text = str(path_or_uri or "").strip()
-      if not text:
-        return ""
-      if not text.startswith("file://"):
-        return text
+        text = str(path_or_uri or "").strip()
+        if not text:
+            return ""
+        if not text.startswith("file://"):
+            return text
 
-      parsed = urlparse(text)
-      local_path = unquote(parsed.path or "")
-      if local_path.startswith("/") and len(local_path) > 2 and local_path[2] == ":":
-        local_path = local_path[1:]
-      return local_path
+        parsed = urlparse(text)
+        local_path = unquote(parsed.path or "")
+        if local_path.startswith("/") and len(local_path) > 2 and local_path[2] == ":":
+            local_path = local_path[1:]
+        return local_path
 
     def _load_css(self) -> str:
         try:
-            with open("styles/certificate_print.css", "r", encoding="utf-8") as f:
+            with open(resolve_resource_path("styles/certificate_print.css"), "r", encoding="utf-8") as f:
                 return f.read()
         except FileNotFoundError:
             return ""
@@ -103,7 +103,7 @@ class CertificatePrinter:
         cert_type: str,
         product_name: str,
         fd: dict,
-      logos: dict,
+        logos: dict,
         is_last: bool,
         extras: dict | None = None,
     ) -> str:
@@ -145,31 +145,31 @@ class CertificatePrinter:
         year_two_digits = date.today().strftime("%y")
         header_number = f"N°/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
         if num_cert:
-          header_number = f"N°{num_cert}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
+            header_number = f"N°{num_cert}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
 
         proces_verbal = ""
         if num_prelevement and date_pv:
-          proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
+            proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
         elif num_prelevement:
-          proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
+            proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
         elif date_pv:
-          proces_verbal = date_pv
+            proces_verbal = date_pv
 
         if not reference:
             reference = f"N°/{year_two_digits}/{num_acte}"
 
         left_logo = (
-          f'<img src="{logos.get("left", "")}" style="width:44px;height:44px;object-fit:contain;">'
+            f'<img src="{logos.get("left", "")}" style="width:44px;height:44px;object-fit:contain;">'
             if logos.get("left")
             else ""
         )
         center_logo = (
-          f'<img src="{logos.get("center", "")}" style="width:104px;height:36px;object-fit:contain;">'
+            f'<img src="{logos.get("center", "")}" style="width:104px;height:36px;object-fit:contain;">'
             if logos.get("center")
             else ""
         )
         right_logo = (
-          f'<img src="{logos.get("right", "")}" style="width:60px;height:50px;object-fit:contain;">'
+            f'<img src="{logos.get("right", "")}" style="width:60px;height:50px;object-fit:contain;">'
             if logos.get("right")
             else ""
         )
@@ -275,7 +275,7 @@ class CertificatePrinter:
             extras = entry[3] if len(entry) > 3 else {}
             pages.append(
                 self._render_single_certificate(
-                  cert_type, product_name, fd, logos,
+                    cert_type, product_name, fd, logos,
                     i == len(assignments) - 1, extras,
                 )
             )
@@ -387,30 +387,30 @@ class CertificatePrinter:
             year_two_digits = date.today().strftime("%y")
             header_number = f"N°/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
             if extras.get("num_cert", ""):
-              header_number = f"N°{extras.get('num_cert')}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
+                header_number = f"N°{extras.get('num_cert')}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
 
             proces_verbal = extras.get("proces_verbal", "")
             if not proces_verbal:
-              num_prelevement = str(extras.get("num_prelevement", "") or "").strip()
-              date_pv = str(extras.get("date_pv", "") or "").strip()
-              if num_prelevement and date_pv:
-                proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
-              elif num_prelevement:
-                proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
-              elif date_pv:
-                proces_verbal = date_pv
+                num_prelevement = str(extras.get("num_prelevement", "") or "").strip()
+                date_pv = str(extras.get("date_pv", "") or "").strip()
+                if num_prelevement and date_pv:
+                    proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
+                elif num_prelevement:
+                    proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
+                elif date_pv:
+                    proces_verbal = date_pv
 
             title_table = Table(
                 [
-                  [
+                    [
                     Paragraph('<para align="center"><font size=16><b><u>%s</u></b></font></para>' % _TITLES[cert_type], styles['Normal']),
-                  ],
-                  [
+                    ],
+                    [
                     Paragraph(f'<para align="center"><b>{header_number}</b></para>', styles['Normal']),
-                  ],
-                  [],
-                  [],
-                  []
+                    ],
+                    [],
+                    [],
+                    []
                 ],
                 colWidths=[doc.width]
             )

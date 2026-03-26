@@ -7,17 +7,33 @@ STEP TO LAUNCH THE PROGRAM:
 
 DATABASE CONFIGURATION:
 
-This project uses MySQL and reads connection settings from environment variables.
+By default, the application uses a local SQLite database file and starts without MySQL.
+
+Default local database path:
+
+    %LOCALAPPDATA%\LFCA\lfca.db
+
+Optional environment variables for local mode:
+
+    DB_ENGINE=sqlite
+    DB_PATH=C:\path\to\lfca.db
+
+If you explicitly want to use MySQL instead, set:
+
+    DB_ENGINE=mysql
+
+Then the application reads these connection settings from environment variables.
 If no variables are set, defaults are:
 
     DB_HOST=localhost
     DB_PORT=3306
     DB_USER=sam
-    DB_PASSWORD=tahina
+    DB_PASSWORD=
     DB_NAME=invoicing
 
 Example (Linux/macOS):
 
+    export DB_ENGINE=mysql
     export DB_HOST=localhost
     export DB_PORT=3306
     export DB_USER=your_user

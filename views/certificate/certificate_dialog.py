@@ -35,16 +35,16 @@ _COL_COUNT          = 14
 
 _HEADERS = [
     "Désignation",
-    "Quantité",
-    "Qté Analysée",
-    "N° Lot",
+    "Quantité *",
+    "Qté Analysée *",
+    "N° Lot *",
     "N° Acte",
-    "N° Cert",
-    "Classe",
-    "Date Prod.",
-    "Date Péremp.",
-    "N° Prélèvement",
-    "Date PV",
+    "N° Cert *",
+    "Classe *",
+    "Date de production *",
+    "Date de péremption *",
+    "N° Prélèvement *",
+    "Date PV *",
     "CC",
     "CNC",
     "Imprimer",
@@ -76,7 +76,7 @@ class CertificateDialog(QDialog):
         self._printed_pids: set = set()
 
         self.setWindowTitle("Certificats — CC / CNC")
-        self.setMinimumSize(1200, 420)
+        self.setMinimumSize(1600, 520)
         self.setModal(True)
 
         self._build_ui()
@@ -97,6 +97,11 @@ class CertificateDialog(QDialog):
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-weight: bold; font-size: 13px; margin-bottom: 4px;")
         layout.addWidget(title)
+
+        required_note = QLabel("Les champs marqués * sont obligatoires. N° Acte reste optionnel.")
+        required_note.setAlignment(Qt.AlignCenter)
+        required_note.setStyleSheet("color: #2F5A8F; font-weight: bold; margin-bottom: 6px;")
+        layout.addWidget(required_note)
 
         self._table = QTableWidget()
         self._table.setColumnCount(_COL_COUNT)
@@ -121,7 +126,11 @@ class CertificateDialog(QDialog):
             _COL_DATE_PV,
         ):
             hdr.setSectionResizeMode(col, QHeaderView.Interactive)
-            self._table.setColumnWidth(col, 110)
+            self._table.setColumnWidth(col, 140)
+        self._table.setColumnWidth(_COL_NUM_PRELEV, 160)
+        self._table.setColumnWidth(_COL_DATE_PROD, 150)
+        self._table.setColumnWidth(_COL_DATE_PEREMP, 150)
+        self._table.setColumnWidth(_COL_DATE_PV, 140)
         hdr.setSectionResizeMode(_COL_CC, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(_COL_CNC, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(_COL_IMPRIMER, QHeaderView.ResizeToContents)

@@ -8,8 +8,11 @@ class ProformaInvoiceRecord(QtWidgets.QWidget):
         self.proformainvoice = ProformaInvoice()
         self.setObjectName("card")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
         self.list_record = ListRecordTemplate(self.proformainvoice.headers,self.proformainvoice.data)
+        self.list_record.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
         layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.list_record)
         self.load_records()
 

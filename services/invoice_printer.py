@@ -14,6 +14,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 from PySide6.QtWidgets import QMessageBox
 
 from utils.text_utils import TextUtils
+from utils.path_utils import resolve_resource_path
 
 
 class InvoicePrinter:
@@ -21,12 +22,12 @@ class InvoicePrinter:
         self.parent = parent_widget
 
     def _resolve_logo_src(self):
-        logo_path = Path(__file__).resolve().parent.parent / "images" / "image.png"
+        logo_path = resolve_resource_path("images/image.png")
         return str(logo_path) if logo_path.exists() else ""
 
     def _load_print_css(self):
         try:
-            with open("styles/invoice_print.css", "r", encoding="utf-8") as css_file:
+            with open(resolve_resource_path("styles/invoice_print.css"), "r", encoding="utf-8") as css_file:
                 return css_file.read()
         except FileNotFoundError:
             return ""

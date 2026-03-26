@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QIntValidator, QColor
 from PySide6.QtCore import Qt, Signal
+from utils.path_utils import resolve_resource_path
 
 
 class ProductManager(QWidget):
@@ -750,7 +751,7 @@ class ProductManager(QWidget):
 
     def _apply_stylesheet(self, stylesheet_path):
         try:
-            with open(stylesheet_path, "r", encoding="utf-8") as file:
+            with open(resolve_resource_path(stylesheet_path), "r", encoding="utf-8") as file:
                 self.setStyleSheet(file.read())
         except FileNotFoundError:
             print(f"Stylesheet {stylesheet_path} not found.")

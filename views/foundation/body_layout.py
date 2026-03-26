@@ -14,6 +14,7 @@ from views.foundation.body_actions.print_invoice_action import PrintInvoiceActio
 from views.foundation.body_actions.certificate_action import CertificateAction
 from views.foundation.body_actions.save_invoice_action import SaveInvoiceAction
 from views.foundation.body_actions.update_total_display_action import UpdateTotalDisplayAction
+from utils.path_utils import resolve_resource_path
 
 class BodyLayout(QtWidgets.QWidget):
     def __init__(self, parent=None, invoice_type="standard"):
@@ -125,7 +126,7 @@ class BodyLayout(QtWidgets.QWidget):
 
     def _apply_stylesheet(self, stylesheet_path):
         try:
-            with open(stylesheet_path, 'r', encoding='utf-8') as f:
+            with open(resolve_resource_path(stylesheet_path), 'r', encoding='utf-8') as f:
                 stylesheet = f.read()
             self.setStyleSheet(self.styleSheet() + "\n" + stylesheet)
         except FileNotFoundError:

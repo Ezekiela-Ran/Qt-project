@@ -1,5 +1,4 @@
 from models.database.tables import Tables
-import mysql.connector
 
 class DatabaseManager(Tables):
     table_name = ""
@@ -31,62 +30,33 @@ class DatabaseManager(Tables):
         finally:
             db.close()
 
+    def _ensure_column(self, table_name, column_name, definition):
+        if not self.column_exists(table_name, column_name):
+            self.cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
     def migrate_tables(self):
         # Migration pour ajouter les colonnes manquantes si elles n'existent pas
-        try:
-            self.cursor.execute("ALTER TABLE standard_invoice ADD COLUMN total DECIMAL(10,2) DEFAULT 0")
-        except mysql.connector.Error as e:
-            if e.errno not in (1060, 1061):  # Column already exists or duplicate key
-                raise
-        
-        try:
-            self.cursor.execute("ALTER TABLE proforma_invoice ADD COLUMN total DECIMAL(10,2) DEFAULT 0")
-        except mysql.connector.Error as e:
-            if e.errno not in (1060, 1061):  # Column already exists or duplicate key
-                raise
-        
-        try:
-            self.cursor.execute("ALTER TABLE standard_invoice ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-        except mysql.connector.Error as e:
-            if e.errno not in (1060, 1061):  # Column already exists or duplicate key
-                raise
-        
-        try:
-            self.cursor.execute("ALTER TABLE proforma_invoice ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-        except mysql.connector.Error as e:
-            if e.errno not in (1060, 1061):  # Column already exists or duplicate key
-                raise
+        self._ensure_column("standard_invoice", "total", "DECIMAL(10,2) DEFAULT 0")
+        self._ensure_column("proforma_invoice", "total", "DECIMAL(10,2) DEFAULT 0")
+        self._ensure_column("standard_invoice", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        self._ensure_column("proforma_invoice", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        self._ensure_column("invoice_client", "ref_b_analyse", "INT NULL")
+        self._ensure_column("invoice_client", "num_act", "VARCHAR(255) NULL")
 
-        try:
-            self.cursor.execute("ALTER TABLE products MODIFY COLUMN num_act VARCHAR(191) NULL")
-        except mysql.connector.Error as e:
-            # Ignore harmless schema mismatch errors if already compatible.
-            if e.errno not in (1060, 1061):
-                raise
-
-        try:
-            self.cursor.execute("ALTER TABLE invoice_client ADD COLUMN ref_b_analyse INT NULL")
-        except mysql.connector.Error as e:
-            if e.errno not in (1060, 1061):
-                raise
-
-        try:
-            self.cursor.execute("ALTER TABLE invoice_client ADD COLUMN num_act VARCHAR(255) NULL")
-        except mysql.connector.Error as e:
-            if e.errno not in (1060, 1061):
-                raise
-
-        try:
-            self.cursor.execute("UPDATE products SET num_act = NULL WHERE num_act IS NOT NULL AND TRIM(num_act) IN ('', '0')")
+        if self.is_mysql:
             try:
+                self.cursor.execute("ALTER TABLE products MODIFY COLUMN num_act VARCHAR(191) NULL")
+            except Exception:
+                pass
+
+        self.cursor.execute("UPDATE products SET num_act = NULL WHERE num_act IS NOT NULL AND TRIM(num_act) IN ('', '0')")
+
+        if self.index_exists("uk_products_num_act"):
+            if self.is_mysql:
                 self.cursor.execute("DROP INDEX uk_products_num_act ON products")
-            except mysql.connector.Error as drop_err:
-                if drop_err.errno != 1091:
-                    raise
-            self.cursor.execute("CREATE UNIQUE INDEX uk_products_num_act ON products(num_act)")
-        except mysql.connector.Error as e:
-            if e.errno not in (1061, 1062):
-                raise
+            else:
+                self.cursor.execute("DROP INDEX uk_products_num_act")
+        self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_products_num_act ON products(num_act)")
 
     def fetch_all(self):
         cursor = self.conn.cursor(dictionary=True)
@@ -109,13 +79,14 @@ class DatabaseManager(Tables):
         cursor = self.conn.cursor()
         try:
             cursor.execute(
-                """
-                INSERT INTO app_settings (setting_key, setting_value)
-                VALUES (%s, %s)
-                ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
-                """,
-                (key, str(value)),
+                "UPDATE app_settings SET setting_value=%s WHERE setting_key=%s",
+                (str(value), key),
             )
+            if cursor.rowcount == 0:
+                cursor.execute(
+                    "INSERT INTO app_settings (setting_key, setting_value) VALUES (%s, %s)",
+                    (key, str(value)),
+                )
             self.conn.commit()
         finally:
             cursor.close()
@@ -149,8 +120,8 @@ class DatabaseManager(Tables):
                 "Initialisation impossible : des données existent déjà dans la base. Les compteurs ont déjà été initialisés et ne peuvent plus être modifiés."
             )
 
-        self.cursor.execute(f"ALTER TABLE standard_invoice AUTO_INCREMENT = {invoice_start}")
-        self.cursor.execute(f"ALTER TABLE proforma_invoice AUTO_INCREMENT = {invoice_start}")
+        self.reset_table_sequence("standard_invoice", invoice_start)
+        self.reset_table_sequence("proforma_invoice", invoice_start)
         self.set_setting("ref_b_analyse_start", ref_start)
         self.set_setting("ref_b_analyse_last", ref_start - 1)
         self.set_setting("invoice_id_start", invoice_start)
@@ -176,37 +147,18 @@ class DatabaseManager(Tables):
             cursor.close()
 
     def allocate_next_ref_b_analyse(self):
-        """Atomically allocate and return the next global ref_b_analyse."""
-        cursor = self.conn.cursor()
+        """Allocate and return the next global ref_b_analyse."""
+        start = self.get_setting("ref_b_analyse_start", 1)
         try:
-            start = self.get_setting("ref_b_analyse_start", 1)
-            try:
-                start_value = int(start)
-            except Exception:
-                start_value = 1
-            cursor.execute(
-                """
-                INSERT INTO app_settings (setting_key, setting_value)
-                VALUES (%s, %s)
-                ON DUPLICATE KEY UPDATE setting_value = setting_value
-                """,
-                ("ref_b_analyse_last", str(max(start_value - 1, 0))),
-            )
-            cursor.execute(
-                """
-                UPDATE app_settings
-                SET setting_value = LAST_INSERT_ID(CAST(setting_value AS UNSIGNED) + 1)
-                WHERE setting_key = %s
-                """,
-                ("ref_b_analyse_last",),
-            )
-            cursor.execute("SELECT LAST_INSERT_ID()")
-            row = cursor.fetchone()
-            next_ref = int(row[0]) if row and row[0] is not None else max(start_value, 1)
-            self.conn.commit()
-            return next_ref
-        finally:
-            cursor.close()
+            start_value = int(start)
+        except Exception:
+            start_value = 1
+
+        current = self.get_max_ref_b_analyse()
+        next_ref = max(current + 1, start_value)
+        self.set_setting("ref_b_analyse_last", next_ref)
+        self.conn.commit()
+        return next_ref
 
     def insert_type(self, name: str):
         cursor = self.conn.cursor()
@@ -214,6 +166,7 @@ class DatabaseManager(Tables):
             query = "INSERT INTO product_type (product_type_name) VALUES (%s)"
             cursor.execute(query, (name,))
             self.conn.commit()
+            return cursor.lastrowid
         finally:
             cursor.close()
 
@@ -471,42 +424,44 @@ class DatabaseManager(Tables):
             year = datetime.date.today().year
         suffix = str(year)
         try:
-            # Find all user tables that are not already archive tables
-            self.cursor.execute(
-                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME NOT LIKE '%archive_%'"
-            )
-            tables = [row['TABLE_NAME'] for row in self.cursor.fetchall()]
+            tables = self.list_live_tables()
 
             # Create archive tables and copy data (archive all tables)
             exclude_tables = {'products', 'product_type'}
             for tbl in tables:
                 archive_name = f"{tbl}_archive_{suffix}"
-                self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {archive_name} LIKE {tbl}")
+                if self.is_mysql:
+                    self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {archive_name} LIKE {tbl}")
+                else:
+                    self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {archive_name} AS SELECT * FROM {tbl} WHERE 0")
                 self.cursor.execute(f"INSERT INTO {archive_name} SELECT * FROM {tbl}")
             self.conn.commit()
 
             # Truncate originals safely by disabling foreign key checks
             # Do NOT truncate product-related tables (we archived them but keep live data)
-            self.cursor.execute("SET FOREIGN_KEY_CHECKS=0")
+            self.set_foreign_keys(False)
             for tbl in tables:
                 if tbl in exclude_tables:
                     continue
-                self.cursor.execute(f"TRUNCATE TABLE {tbl}")
-            self.cursor.execute("SET FOREIGN_KEY_CHECKS=1")
+                if self.is_mysql:
+                    self.cursor.execute(f"TRUNCATE TABLE {tbl}")
+                else:
+                    self.cursor.execute(f"DELETE FROM {tbl}")
+                self.reset_table_sequence(tbl, 1)
+            self.set_foreign_keys(True)
 
             # Reset AUTO_INCREMENT on tables that have it
-            self.cursor.execute(
-                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS "
-                "WHERE TABLE_SCHEMA=DATABASE() AND EXTRA LIKE '%auto_increment%'"
-            )
-            auto_tables = {row['TABLE_NAME'] for row in self.cursor.fetchall()}
-            for tbl in auto_tables:
-                try:
-                    self.cursor.execute(f"ALTER TABLE {tbl} AUTO_INCREMENT=1")
-                except Exception:
-                    # ignore tables that can't be altered here
-                    pass
+            if self.is_mysql:
+                self.cursor.execute(
+                    "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA=DATABASE() AND EXTRA LIKE '%auto_increment%'"
+                )
+                auto_tables = {row['TABLE_NAME'] for row in self.cursor.fetchall()}
+                for tbl in auto_tables:
+                    try:
+                        self.reset_table_sequence(tbl, 1)
+                    except Exception:
+                        pass
 
             # Reset ref_b_analyse values in products to 0 so counter restarts at 1
             try:

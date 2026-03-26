@@ -1,4 +1,5 @@
 from PySide6 import QtWidgets
+from utils.path_utils import resolve_resource_path
 
 class MenuBar(QtWidgets.QMenuBar):
     def __init__(self, parent):
@@ -26,5 +27,5 @@ class MenuBar(QtWidgets.QMenuBar):
         self._apply_styles()
     
     def _apply_styles(self): 
-        with open("styles/menu.qss", "r") as f:
+        with open(resolve_resource_path("styles/menu.qss"), "r", encoding="utf-8") as f:
             self.setStyleSheet(f.read())
