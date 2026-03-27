@@ -26,6 +26,7 @@ class DatabaseManager(Tables):
             db.products_table()
             db.invoice_client_table()
             db.app_settings_table()
+            db.users_table()
             db.migrate_tables()  # Ajouter les colonnes manquantes
         finally:
             db.close()
@@ -42,6 +43,9 @@ class DatabaseManager(Tables):
         self._ensure_column("proforma_invoice", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         self._ensure_column("invoice_client", "ref_b_analyse", "INT NULL")
         self._ensure_column("invoice_client", "num_act", "VARCHAR(255) NULL")
+        self._ensure_column("users", "role", "VARCHAR(32) NOT NULL DEFAULT 'user'")
+        self._ensure_column("users", "is_active", "INT NOT NULL DEFAULT 1")
+        self._ensure_column("users", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
 
         if self.is_mysql:
             try:
@@ -49,7 +53,14 @@ class DatabaseManager(Tables):
             except Exception:
                 pass
 
+            try:
+                self.cursor.execute("ALTER TABLE users MODIFY COLUMN username VARCHAR(191) NOT NULL")
+            except Exception:
+                pass
+
         self.cursor.execute("UPDATE products SET num_act = NULL WHERE num_act IS NOT NULL AND TRIM(num_act) IN ('', '0')")
+        self.cursor.execute("UPDATE users SET role = 'user' WHERE role IS NULL OR TRIM(role) = ''")
+        self.cursor.execute("UPDATE users SET is_active = 1 WHERE is_active IS NULL")
 
         if self.index_exists("uk_products_num_act"):
             if self.is_mysql:
@@ -57,6 +68,7 @@ class DatabaseManager(Tables):
             else:
                 self.cursor.execute("DROP INDEX uk_products_num_act")
         self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_products_num_act ON products(num_act)")
+        self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username ON users(username)")
 
     def fetch_all(self):
         cursor = self.conn.cursor(dictionary=True)
@@ -167,6 +179,91 @@ class DatabaseManager(Tables):
             cursor.execute(query, (name,))
             self.conn.commit()
             return cursor.lastrowid
+        finally:
+            cursor.close()
+
+    def count_users(self):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("SELECT COUNT(*) FROM users")
+            row = cursor.fetchone()
+            return row[0] if row else 0
+        finally:
+            cursor.close()
+
+    def count_admin_users(self):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("SELECT COUNT(*) FROM users WHERE role=%s", ("admin",))
+            row = cursor.fetchone()
+            return row[0] if row else 0
+        finally:
+            cursor.close()
+
+    def create_user(self, username, password_hash, role="user", is_active=True):
+        normalized_username = str(username or "").strip()
+        normalized_role = str(role or "user").strip().lower() or "user"
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO users (username, password_hash, role, is_active) VALUES (%s, %s, %s, %s)",
+                (normalized_username, password_hash, normalized_role, 1 if is_active else 0),
+            )
+            self.conn.commit()
+            return cursor.lastrowid
+        finally:
+            cursor.close()
+
+    def get_user_by_username(self, username, include_password_hash=True):
+        cursor = self.conn.cursor(dictionary=True)
+        try:
+            fields = "id, username, password_hash, role, is_active, created_at" if include_password_hash else "id, username, role, is_active, created_at"
+            cursor.execute(f"SELECT {fields} FROM users WHERE username=%s", (str(username or "").strip(),))
+            return cursor.fetchone()
+        finally:
+            cursor.close()
+
+    def get_user_by_id(self, user_id, include_password_hash=True):
+        cursor = self.conn.cursor(dictionary=True)
+        try:
+            fields = "id, username, password_hash, role, is_active, created_at" if include_password_hash else "id, username, role, is_active, created_at"
+            cursor.execute(f"SELECT {fields} FROM users WHERE id=%s", (user_id,))
+            return cursor.fetchone()
+        finally:
+            cursor.close()
+
+    def list_users(self):
+        cursor = self.conn.cursor(dictionary=True)
+        try:
+            cursor.execute("SELECT id, username, role, is_active, created_at FROM users ORDER BY username ASC")
+            return cursor.fetchall()
+        finally:
+            cursor.close()
+
+    def update_user(self, user_id, username, role, is_active=True):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE users SET username=%s, role=%s, is_active=%s WHERE id=%s",
+                (str(username or "").strip(), str(role or "user").strip().lower() or "user", 1 if is_active else 0, user_id),
+            )
+            self.conn.commit()
+        finally:
+            cursor.close()
+
+    def update_user_password(self, user_id, password_hash):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("UPDATE users SET password_hash=%s WHERE id=%s", (password_hash, user_id))
+            self.conn.commit()
+        finally:
+            cursor.close()
+
+    def delete_user(self, user_id):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("DELETE FROM users WHERE id=%s", (user_id,))
+            self.conn.commit()
         finally:
             cursor.close()
 
@@ -427,7 +524,7 @@ class DatabaseManager(Tables):
             tables = self.list_live_tables()
 
             # Create archive tables and copy data (archive all tables)
-            exclude_tables = {'products', 'product_type'}
+            exclude_tables = {'products', 'product_type', 'users'}
             for tbl in tables:
                 archive_name = f"{tbl}_archive_{suffix}"
                 if self.is_mysql:

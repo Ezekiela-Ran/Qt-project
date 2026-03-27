@@ -92,7 +92,25 @@ class CertificatePrinter:
                 form.address_input.text().strip() if hasattr(form, "address_input") else ""
             ),
             "date":         escape(date_str),
+            "date_result":  escape(
+                form.date_result_input.date().toString("dd/MM/yyyy")
+                if hasattr(form, "date_result_input") else ""
+            ),
+            "product_ref":  escape(
+                form.product_ref_input.text().strip()
+                if hasattr(form, "product_ref_input") else ""
+            ),
         }
+
+    @staticmethod
+    def _build_proces_verbal(num_prelevement: str, date_pv: str, year_two_digits: str) -> str:
+        if num_prelevement and date_pv:
+            return f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
+        if num_prelevement:
+            return f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
+        if date_pv:
+            return date_pv
+        return ""
 
     # ------------------------------------------------------------------
     # Génération HTML
@@ -147,13 +165,13 @@ class CertificatePrinter:
         if num_cert:
             header_number = f"N°{num_cert}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
 
-        proces_verbal = ""
-        if num_prelevement and date_pv:
-            proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
-        elif num_prelevement:
-            proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
-        elif date_pv:
-            proces_verbal = date_pv
+        proces_verbal = escape(
+            self._build_proces_verbal(
+                extras.get("num_prelevement", ""),
+                extras.get("date_pv", ""),
+                year_two_digits,
+            )
+        )
 
         if not reference:
             reference = f"N°/{year_two_digits}/{num_acte}"
@@ -213,11 +231,22 @@ class CertificatePrinter:
     <tr><td><b>Classe</b></td><td>:</td><td><b>{classe}</b></td></tr>
     <tr><td><b>Quantité</b></td><td>:</td><td><b>{quantite}</b>  <span style="display:inline-block;width:24pt;"></span>
       <b>Quantité Analysée</b> : <b>{quantite_analysee}</b></td></tr>
+    <tr><td><b>N° Certificat</b></td><td>:</td><td><b>{num_cert}</b></td></tr>
+    <tr><td><b>N° Acte</b></td><td>:</td><td><b>{num_acte}</b></td></tr>
     <tr><td><b>Date de production</b></td><td>:</td><td><b>{date_production}</b></td></tr>
     <tr><td><b>Date de péremption</b></td><td>:</td><td><b>{date_peremption}</b></td></tr>
     <tr><td><b>Lot</b></td><td>:</td><td><b>{num_lot}</b></td></tr>
+    <tr><td><b>N° Prélèvement</b></td><td>:</td><td><b>{num_prelevement}</b></td></tr>
+    <tr><td><b>Date PV</b></td><td>:</td><td><b>{date_pv}</b></td></tr>
     <tr><td><b>Procès-verbal de prélèvement</b></td><td>:</td><td><b>{proces_verbal}</b></td></tr>
     <tr><td><b>Société / Etablissement</b></td><td>:</td><td><b>{fd['company_name']}</b></td></tr>
+    <tr><td><b>Responsable</b></td><td>:</td><td><b>{fd['responsable']}</b></td></tr>
+    <tr><td><b>Statistique</b></td><td>:</td><td><b>{fd['stat']}</b></td></tr>
+    <tr><td><b>NIF</b></td><td>:</td><td><b>{fd['nif']}</b></td></tr>
+    <tr><td><b>Adresse</b></td><td>:</td><td><b>{fd['address']}</b></td></tr>
+    <tr><td><b>Date d'émission</b></td><td>:</td><td><b>{fd['date']}</b></td></tr>
+    <tr><td><b>Date de résultat</b></td><td>:</td><td><b>{fd['date_result']}</b></td></tr>
+    <tr><td><b>Ref produit</b></td><td>:</td><td><b>{fd['product_ref']}</b></td></tr>
     <tr><td><b>Analyse</b></td><td>:</td><td><b>{escape(analyse_sentence)}</b></td></tr>
     <tr><td><b>Référence</b></td><td>:</td><td><b>{reference}</b></td></tr>
   </table>
@@ -297,12 +326,9 @@ class CertificatePrinter:
             from reportlab.lib.pagesizes import A4
             from reportlab.lib.units import mm
             from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, Image
+            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, Image, PageBreak
             from reportlab.lib import colors
             fd = self._extract_form_data(form)
-            entry = assignments[0]
-            pid, product_name, cert_type = entry[0], entry[1], entry[2]
-            extras = entry[3] if len(entry) > 3 else {}
             file_path = output_path
             doc = SimpleDocTemplate(
                 file_path,
@@ -316,7 +342,6 @@ class CertificatePrinter:
             styles = getSampleStyleSheet()
             # Logos (plus grands)
             logos = self._resolve_logo_sources()
-            logo_row = []
 
             logo_height = 70   # hauteur max
             logo_max_width = 90  # largeur max
@@ -339,133 +364,127 @@ class CertificatePrinter:
                     return img
                 return Spacer(1, logo_height)
 
-            # Logos
-            left_logo = get_logo("left")
-            center_logo = get_logo("center")
-            right_logo = get_logo("right")
+            def build_header_table():
+                left_logo = get_logo("left")
+                center_logo = get_logo("center")
+                right_logo = get_logo("right")
 
-            # 🔥 Bloc texte centré SOUS le logo du milieu
-            center_content = [
-                center_logo,
-                Spacer(1, 5),
-                Paragraph('<para align="center"><b>MINISTÈRE DE LA SANTÉ PUBLIQUE</b></para>', styles['Normal']),
-                Paragraph('<para align="center">--------------</para>', styles['Normal']),
-                Paragraph('<para align="center"><b>SECRÉTARIAT GÉNÉRAL</b></para>', styles['Normal']),
-                Paragraph('<para align="center">--------------</para>', styles['Normal']),
-                Spacer(1, 2),
-                Paragraph('<para align="center"><b>AGENCE DE CONTRÔLE DE LA SÉCURITÉ SANITAIRE<br/>ET DE LA QUALITÉ DES DENRÉES ALIMENTAIRES</b></para>', styles['Normal']),
-                Spacer(1, 2),
-            ]
+                center_content = [
+                    center_logo,
+                    Spacer(1, 5),
+                    Paragraph('<para align="center"><b>MINISTÈRE DE LA SANTÉ PUBLIQUE</b></para>', styles['Normal']),
+                    Paragraph('<para align="center">--------------</para>', styles['Normal']),
+                    Paragraph('<para align="center"><b>SECRÉTARIAT GÉNÉRAL</b></para>', styles['Normal']),
+                    Paragraph('<para align="center">--------------</para>', styles['Normal']),
+                    Spacer(1, 2),
+                    Paragraph('<para align="center"><b>AGENCE DE CONTRÔLE DE LA SÉCURITÉ SANITAIRE<br/>ET DE LA QUALITÉ DES DENRÉES ALIMENTAIRES</b></para>', styles['Normal']),
+                    Spacer(1, 2),
+                ]
 
-           
-            # Tableau principal (3 colonnes)
-            table = Table(
-                [
-                  [left_logo, center_content, right_logo],
-                  [],
-                  [],
-                  []
-                ],
-                colWidths=[doc.width/2.8]*3
-            )
+                table = Table(
+                    [
+                      [left_logo, center_content, right_logo],
+                      [],
+                      [],
+                      []
+                    ],
+                    colWidths=[doc.width/2.8]*3
+                )
 
-            table.setStyle(TableStyle([
+                table.setStyle(TableStyle([
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                    ('ALIGN', (0,0), (0,0), 'LEFT'),
+                    ('ALIGN', (1,0), (1,0), 'CENTER'),
+                    ('ALIGN', (2,0), (2,0), 'RIGHT'),
+                    ('LEFTPADDING', (0,0), (-1,-1), 0),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                    ('TOPPADDING', (0,0), (-1,-1), 0),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+                ]))
 
-                ('VALIGN', (0,0), (-1,-1), 'TOP'),
-                ('ALIGN', (0,0), (0,0), 'LEFT'),
-                ('ALIGN', (1,0), (1,0), 'CENTER'),
-                ('ALIGN', (2,0), (2,0), 'RIGHT'),
+                return table
 
-                ('LEFTPADDING', (0,0), (-1,-1), 0),
-                ('RIGHTPADDING', (0,0), (-1,-1), 0),
-                ('TOPPADDING', (0,0), (-1,-1), 0),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-            ]))
+            for index, entry in enumerate(assignments):
+                product_name, cert_type = entry[1], entry[2]
+                extras = entry[3] if len(entry) > 3 else {}
 
-            story.append(table)
-            story.append(Spacer(1, 10))
-            year_two_digits = date.today().strftime("%y")
-            header_number = f"N°/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
-            if extras.get("num_cert", ""):
-                header_number = f"N°{extras.get('num_cert')}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
+                story.append(build_header_table())
+                story.append(Spacer(1, 10))
+                year_two_digits = date.today().strftime("%y")
+                header_number = f"N°/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
+                if extras.get("num_cert", ""):
+                    header_number = f"N°{extras.get('num_cert')}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
 
-            proces_verbal = extras.get("proces_verbal", "")
-            if not proces_verbal:
                 num_prelevement = str(extras.get("num_prelevement", "") or "").strip()
                 date_pv = str(extras.get("date_pv", "") or "").strip()
-                if num_prelevement and date_pv:
-                    proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
-                elif num_prelevement:
-                    proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
-                elif date_pv:
-                    proces_verbal = date_pv
+                proces_verbal = self._build_proces_verbal(num_prelevement, date_pv, year_two_digits)
+                reference = extras.get("reference", f"N°/{year_two_digits}/{extras.get('num_acte', '')}")
 
-            title_table = Table(
-                [
+                title_table = Table(
                     [
-                    Paragraph('<para align="center"><font size=16><b><u>%s</u></b></font></para>' % _TITLES[cert_type], styles['Normal']),
+                        [
+                        Paragraph('<para align="center"><font size=16><b><u>%s</u></b></font></para>' % _TITLES[cert_type], styles['Normal']),
+                        ],
+                        [
+                        Paragraph(f'<para align="center"><b>{header_number}</b></para>', styles['Normal']),
+                        ],
+                        [],
+                        [],
+                        []
                     ],
-                    [
-                    Paragraph(f'<para align="center"><b>{header_number}</b></para>', styles['Normal']),
-                    ],
-                    [],
-                    [],
-                    []
-                ],
-                colWidths=[doc.width]
-            )
-            title_table.setStyle(TableStyle([
-                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ]))
+                    colWidths=[doc.width]
+                )
+                title_table.setStyle(TableStyle([
+                    ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ]))
 
-            story.append(title_table)
-            story.append(Paragraph("Je, soussigné, le Directeur de l'Agence de Contrôle de la Sécurité Sanitaire et de la Qualité des Denrées Alimentaires (ACSSQDA), certifie que", ParagraphStyle('main', fontSize=11, leading=14, spaceAfter=8)))
-            
-            # Tableau infos produit (sans bordure)
-            data = [
-                ["Echantillon", product_name, '', ''],
-                ["Classe", extras.get("classe", ""), '', ''],
-                ["Quantité", extras.get("quantite", ""), "Quantité Analysée", extras.get("quantite_analysee", "")],
-                ["Date de production", extras.get("date_production", ""), '', ''],
-                ["Date de péremption", extras.get("date_peremption", ""), '', ''],
-                ["Lot", extras.get("num_lot", ""), '', ''],
-                ["Procès-verbal de prélèvement", extras.get("proces_verbal", ""), '', ''],
-                ["Société / Etablissement", fd['company_name'], '', ''],
-                ["Analyse", extras.get("analyse", ""), '', ''],
-                ["Référence", extras.get("reference", f"N°/{year_two_digits}/{extras.get('num_acte','')}") , '', ''],
-            ]
-            table = Table(data, colWidths=[110, 120, 110, 120])
-            table.setStyle(TableStyle([
-                ('SPAN', (0,2), (1,2)),
-                ('SPAN', (2,2), (3,2)),
-                ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
-                ('FONTSIZE', (0,0), (-1,-1), 10),
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-                # Pas de bordure !
-                ('LINEBELOW', (0,0), (-1,-1), 0, colors.white),
-                ('LINEABOVE', (0,0), (-1,-1), 0, colors.white),
-                ('LINEBEFORE', (0,0), (-1,-1), 0, colors.white),
-                ('LINEAFTER', (0,0), (-1,-1), 0, colors.white),
-                ('LEFTPADDING', (0,0), (-1,-1), 2),
-                ('RIGHTPADDING', (0,0), (-1,-1), 2),
-                ('TOPPADDING', (0,0), (-1,-1), 2),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 2),
-            ]))
-            story.append(table)
-            story.append(Spacer(1, 10))
-            # Résultat
-            result_text = "consommable" if cert_type == "CC" else "non consommable"
-            story.append(Paragraph(f"<b>Est déclaré {result_text} à la consommation humaine</b>", ParagraphStyle('res', fontSize=11, leading=14, spaceAfter=8)))
-            story.append(Paragraph("En foi de quoi, ce certificat est délivré pour servir et valoir ce que de droit.", ParagraphStyle('main2', fontSize=10, leading=13, spaceAfter=8)))
-            # Signature
-            story.append(Paragraph(f"<para align='right'>Fait à Antananarivo, le {fd['date']}</para>", styles['Normal']))
-            story.append(Spacer(1, 8))
-            story.append(Paragraph("<para align='right'><b>Le Directeur,</b></para>", styles['Normal']))
-            story.append(Spacer(1, 36))
-            # Note de bas de page
-            story.append(Paragraph("<i>*Ce certificat est valable uniquement pour le LOT ayant fait l'objet d'analyse mentionnée ci-dessus</i>", ParagraphStyle('footer', fontSize=9, leading=11)))
+                story.append(title_table)
+                story.append(Paragraph("Je, soussigné, le Directeur de l'Agence de Contrôle de la Sécurité Sanitaire et de la Qualité des Denrées Alimentaires (ACSSQDA), certifie que", ParagraphStyle('main', fontSize=11, leading=14, spaceAfter=8)))
+
+                data = [
+                    ["Echantillon", product_name, "Classe", extras.get("classe", "")],
+                    ["Quantité", extras.get("quantite", ""), "Quantité Analysée", extras.get("quantite_analysee", "")],
+                    ["N° Certificat", extras.get("num_cert", ""), "N° Acte", extras.get("num_acte", "")],
+                    ["Date de production", extras.get("date_production", ""), "Date de péremption", extras.get("date_peremption", "")],
+                    ["Lot", extras.get("num_lot", ""), "N° Prélèvement", num_prelevement],
+                    ["Date PV", date_pv, "Procès-verbal", proces_verbal],
+                    ["Société / Etablissement", fd['company_name'], "Responsable", fd['responsable']],
+                    ["Statistique", fd['stat'], "NIF", fd['nif']],
+                    ["Adresse", fd['address'], "Date d'émission", fd['date']],
+                    ["Date de résultat", fd['date_result'], "Ref produit", fd['product_ref']],
+                    ["Analyse", extras.get("analyse", ""), "Référence", reference],
+                ]
+                table = Table(data, colWidths=[100, 150, 100, 150])
+                table.setStyle(TableStyle([
+                    ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+                    ('FONTSIZE', (0,0), (-1,-1), 10),
+                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                    ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                    ('LINEBELOW', (0,0), (-1,-1), 0, colors.white),
+                    ('LINEABOVE', (0,0), (-1,-1), 0, colors.white),
+                    ('LINEBEFORE', (0,0), (-1,-1), 0, colors.white),
+                    ('LINEAFTER', (0,0), (-1,-1), 0, colors.white),
+                    ('LEFTPADDING', (0,0), (-1,-1), 2),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 2),
+                    ('TOPPADDING', (0,0), (-1,-1), 2),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+                ]))
+                story.append(table)
+                story.append(Spacer(1, 10))
+
+                result_text = "consommable" if cert_type == "CC" else "non consommable"
+                story.append(Paragraph(f"<b>Est déclaré {result_text} à la consommation humaine</b>", ParagraphStyle('res', fontSize=11, leading=14, spaceAfter=8)))
+                story.append(Paragraph("En foi de quoi, ce certificat est délivré pour servir et valoir ce que de droit.", ParagraphStyle('main2', fontSize=10, leading=13, spaceAfter=8)))
+                story.append(Paragraph(f"<para align='right'>Fait à Antananarivo, le {fd['date']}</para>", styles['Normal']))
+                story.append(Spacer(1, 8))
+                story.append(Paragraph("<para align='right'><b>Le Directeur,</b></para>", styles['Normal']))
+                story.append(Spacer(1, 36))
+                story.append(Paragraph("<i>*Ce certificat est valable uniquement pour le LOT ayant fait l'objet d'analyse mentionnée ci-dessus</i>", ParagraphStyle('footer', fontSize=9, leading=11)))
+
+                if index < len(assignments) - 1:
+                    story.append(PageBreak())
+
             doc.build(story)
         except Exception:
             raise

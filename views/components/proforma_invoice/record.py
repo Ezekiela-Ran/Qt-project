@@ -2,6 +2,7 @@ from views.foundation.templates.records import ListRecordTemplate
 from models.proforma_invoice import ProformaInvoice
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import QDate
+from views.foundation.globals import GlobalVariable
 class ProformaInvoiceRecord(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -28,7 +29,7 @@ class ProformaInvoiceRecord(QtWidgets.QWidget):
             form.company_name_input.setText(invoice['company_name'] or '')
             form.nif_input.setText(invoice['nif'] or '')
             form.stat_input.setText(invoice['stat'] or '')
-            form.responsable_input.setText(invoice['resp'] or '')
+            form.responsable_input.setText(GlobalVariable.current_username())
             if hasattr(form, 'date_input') and invoice['date']:
                 form.date_input.setDate(QDate.fromString(str(invoice['date']), "yyyy-MM-dd"))
             

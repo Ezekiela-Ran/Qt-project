@@ -6,7 +6,7 @@ from utils.path_utils import resolve_resource_path
 class FormTemplate(QWidget):
     def __init__(self):
         super().__init__()
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         # Labels et inputs
         self.company_name_label = QLabel("Raison sociale:")
@@ -16,6 +16,7 @@ class FormTemplate(QWidget):
         self.responsable_label = QLabel("Responsable:")
         self.responsable_input = QLineEdit()
         self.responsable_input.setObjectName("invoiceInput")
+        self.responsable_input.setReadOnly(True)
 
         self.stat_label = QLabel("Statistique :")
         self.stat_input = QLineEdit()
@@ -60,4 +61,7 @@ class FormTemplate(QWidget):
         with open(resolve_resource_path("styles/input.qss"), "r", encoding="utf-8") as f:
             style = f.read()
             self.setStyleSheet(style)
+
+    def set_responsable_username(self, username: str):
+        self.responsable_input.setText(str(username or "").strip())
 

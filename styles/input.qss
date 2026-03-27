@@ -22,6 +22,12 @@ QDateEdit {
     border-radius: 2px;
 }
 
+QLineEdit:read-only,
+QDateEdit:read-only {
+    background-color: #FFFFFF;
+    color: #032429;
+}
+
 QLabel {
     margin: 2px;
     padding: 0px;

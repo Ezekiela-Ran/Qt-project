@@ -3,6 +3,7 @@ from views.foundation.head_layout import HeadLayout
 from views.foundation.body_layout import BodyLayout
 from views.components.menu_bar import MenuBar
 from views.foundation.globals import GlobalVariable
+from views.auth import UserManagementDialog
 from models.database_manager import DatabaseManager
 
 class MainLayout(QWidget):
@@ -38,7 +39,7 @@ class MainLayout(QWidget):
 
 
         # Ajout au layout principal
-        for widget, stretch in [(self.head_layout, 2), (self.body_layout, 3)]:
+        for widget, stretch in [(self.head_layout, 0), (self.body_layout, 1)]:
             self.layout.addWidget(widget, stretch)
 
     def menubar_click_standard(self):
@@ -106,6 +107,13 @@ class MainLayout(QWidget):
                 QMessageBox.critical(self, "Erreur", f"La réinitialisation a échoué : {e}")
             finally:
                 db.close()
+
+    def menubar_click_manage_users(self):
+        if not GlobalVariable.is_admin():
+            QMessageBox.warning(self, "Accès refusé", "Seul un administrateur peut gérer les utilisateurs.")
+            return
+        dialog = UserManagementDialog(self, current_user=GlobalVariable.current_user)
+        dialog.exec()
 
     def clear_layout(self):
         while self.layout.count():
