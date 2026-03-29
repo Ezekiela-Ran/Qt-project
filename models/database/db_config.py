@@ -1,5 +1,6 @@
 import json
 import os
+import socket
 from pathlib import Path
 
 from utils.path_utils import get_app_data_dir
@@ -13,17 +14,19 @@ from models.database.sqlite_backend import connect as connect_sqlite
 
 
 DEFAULT_DB_NAME = 'invoicing'
-DEFAULT_DB_ENGINE = 'sqlite'
-DEFAULT_DB_HOST = 'localhost'
+DEFAULT_DB_ENGINE = 'mysql'
+DEFAULT_DB_HOST = '127.0.0.1'
 DEFAULT_DB_PORT = 3306
-DEFAULT_DB_USER = 'sam'
-DEFAULT_DB_PASSWORD = ''
+DEFAULT_DB_USER = 'lfca_app'
+DEFAULT_DB_PASSWORD = 'lfca_app'
 
 
 def build_default_database_config() -> dict:
     return {
         'engine': DEFAULT_DB_ENGINE,
         'sqlite_path': _default_sqlite_path(),
+        'deployment_role': 'client',
+        'server_host_hint': '',
         'mysql': {
             'host': DEFAULT_DB_HOST,
             'port': DEFAULT_DB_PORT,
@@ -72,6 +75,8 @@ def normalize_database_config(raw_config: dict | None) -> dict:
     return {
         'engine': _normalize_engine(raw_config.get('engine')),
         'sqlite_path': _expand_path(raw_config.get('sqlite_path') or defaults['sqlite_path']),
+        'deployment_role': str(raw_config.get('deployment_role') or defaults.get('deployment_role') or 'client').strip().lower() or 'client',
+        'server_host_hint': str(raw_config.get('server_host_hint') or defaults.get('server_host_hint') or '').strip(),
         'mysql': {
             'host': str(mysql_config.get('host') or defaults['mysql']['host']).strip() or DEFAULT_DB_HOST,
             'port': _coerce_port(mysql_config.get('port'), DEFAULT_DB_PORT),
@@ -135,6 +140,8 @@ def get_database_settings() -> dict:
     settings = {
         'engine': engine,
         'sqlite_path': sqlite_path,
+        'deployment_role': str(file_config.get('deployment_role') or 'client').strip().lower() or 'client',
+        'server_host_hint': str(file_config.get('server_host_hint') or '').strip(),
         'mysql': {
             'host': str(_pick_setting('DB_HOST', mysql_file_config.get('host'), DEFAULT_DB_HOST)).strip() or DEFAULT_DB_HOST,
             'port': _get_port(),
@@ -150,6 +157,133 @@ def get_database_settings() -> dict:
         },
     }
     return settings
+
+
+def database_config_requires_setup() -> bool:
+    settings = get_database_settings()
+    if settings['env_overrides']:
+        return False
+
+    config_file = Path(settings['config_file'])
+    if not config_file.exists():
+        return True
+
+    if settings['engine'] != 'mysql':
+        return True
+
+    mysql_settings = settings['mysql']
+    return not all(
+        [
+            mysql_settings.get('host'),
+            mysql_settings.get('user'),
+            mysql_settings.get('database'),
+        ]
+    )
+
+
+def _quote_mysql_string(value: str) -> str:
+    return "'" + str(value or '').replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+def _quote_mysql_identifier(value: str) -> str:
+    return "`" + str(value or '').replace("`", "``") + "`"
+
+
+def detect_local_ipv4_addresses() -> list[str]:
+    addresses = []
+
+    try:
+        probe_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe_socket.connect(("8.8.8.8", 80))
+            primary_ip = probe_socket.getsockname()[0]
+            if primary_ip and not primary_ip.startswith("127."):
+                addresses.append(primary_ip)
+        finally:
+            probe_socket.close()
+    except OSError:
+        pass
+
+    try:
+        hostname = socket.gethostname()
+        for result in socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM):
+            ip_address = result[4][0]
+            if ip_address and not ip_address.startswith("127.") and ip_address not in addresses:
+                addresses.append(ip_address)
+    except OSError:
+        pass
+
+    if not addresses:
+        addresses.append("127.0.0.1")
+    return addresses
+
+
+def build_server_database_config(server_ip: str, database: str = DEFAULT_DB_NAME, port: int = DEFAULT_DB_PORT) -> dict:
+    return normalize_database_config(
+        {
+            'engine': 'mysql',
+            'deployment_role': 'server',
+            'server_host_hint': server_ip,
+            'mysql': {
+                'host': '127.0.0.1',
+                'port': port,
+                'user': DEFAULT_DB_USER,
+                'password': DEFAULT_DB_PASSWORD,
+                'database': database,
+            },
+        }
+    )
+
+
+def build_client_database_config(server_ip: str, database: str = DEFAULT_DB_NAME, port: int = DEFAULT_DB_PORT) -> dict:
+    return normalize_database_config(
+        {
+            'engine': 'mysql',
+            'deployment_role': 'client',
+            'server_host_hint': server_ip,
+            'mysql': {
+                'host': str(server_ip or '').strip(),
+                'port': port,
+                'user': DEFAULT_DB_USER,
+                'password': DEFAULT_DB_PASSWORD,
+                'database': database,
+            },
+        }
+    )
+
+
+def bootstrap_mysql_server(admin_user: str, admin_password: str, database: str = DEFAULT_DB_NAME, port: int = DEFAULT_DB_PORT):
+    if mysql is None:
+        raise RuntimeError("mysql-connector-python n'est pas disponible.")
+
+    normalized_admin_user = str(admin_user or '').strip()
+    if not normalized_admin_user:
+        raise ValueError("Le compte administrateur MySQL est obligatoire.")
+
+    database_name = str(database or DEFAULT_DB_NAME).strip() or DEFAULT_DB_NAME
+    conn = mysql.connector.connect(
+        host='127.0.0.1',
+        port=int(port),
+        user=normalized_admin_user,
+        password=str(admin_password or ''),
+    )
+    cursor = conn.cursor()
+    try:
+        quoted_database = _quote_mysql_identifier(database_name)
+        app_user_local = _quote_mysql_string(DEFAULT_DB_USER)
+        app_password_local = _quote_mysql_string(DEFAULT_DB_PASSWORD)
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {quoted_database}")
+        cursor.execute(f"CREATE USER IF NOT EXISTS {app_user_local}@'localhost' IDENTIFIED BY {app_password_local}")
+        cursor.execute(f"ALTER USER {app_user_local}@'localhost' IDENTIFIED BY {app_password_local}")
+        cursor.execute(f"CREATE USER IF NOT EXISTS {app_user_local}@'%' IDENTIFIED BY {app_password_local}")
+        cursor.execute(f"ALTER USER {app_user_local}@'%' IDENTIFIED BY {app_password_local}")
+        cursor.execute(f"GRANT ALL PRIVILEGES ON {quoted_database}.* TO {app_user_local}@'localhost'")
+        cursor.execute(f"GRANT ALL PRIVILEGES ON {quoted_database}.* TO {app_user_local}@'%'")
+        cursor.execute("FLUSH PRIVILEGES")
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def save_database_config(config: dict, config_path: Path | None = None) -> Path:

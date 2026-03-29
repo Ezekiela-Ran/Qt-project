@@ -2,7 +2,18 @@ from pathlib import Path
 
 from PySide6 import QtWidgets
 
-from models.database.db_config import get_database_settings, save_database_config, test_database_connection
+from models.database.db_config import (
+    DEFAULT_DB_NAME,
+    DEFAULT_DB_PORT,
+    DEFAULT_DB_USER,
+    bootstrap_mysql_server,
+    build_client_database_config,
+    build_server_database_config,
+    detect_local_ipv4_addresses,
+    get_database_settings,
+    save_database_config,
+    test_database_connection,
+)
 
 
 _DIALOG_STYLE = """
@@ -49,23 +60,25 @@ QPushButton:hover {
 
 
 class DatabaseConfigDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, first_run: bool = False):
         super().__init__(parent)
+        self.first_run = first_run
         self.settings = get_database_settings()
         self.config_path = Path(self.settings['config_file'])
+        self.detected_ips = detect_local_ipv4_addresses()
         self.setModal(True)
-        self.setWindowTitle("Configuration de la base de données")
-        self.resize(560, 420)
+        self.setWindowTitle("Configuration MySQL")
+        self.resize(640, 500)
         self.setStyleSheet(_DIALOG_STYLE)
         self._build_ui()
         self._load_values()
-        self._toggle_engine_fields()
+        self._toggle_role_fields()
 
     def _build_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
 
         intro = QtWidgets.QLabel(
-            "Configure la base locale SQLite ou un serveur MySQL distant accessible via l'adresse IP d'un PC ou d'un serveur."
+            "Choisis si ce poste héberge la base MySQL ou s'il se connecte au PC serveur. Tous les utilisateurs et administrateurs seront identiques sur chaque poste uniquement si tous les PC utilisent cette même base MySQL."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -82,87 +95,91 @@ class DatabaseConfigDialog(QtWidgets.QDialog):
             warning.setWordWrap(True)
             layout.addWidget(warning)
 
-        engine_form = QtWidgets.QFormLayout()
-        self.engine_input = QtWidgets.QComboBox()
-        self.engine_input.addItem("SQLite local", "sqlite")
-        self.engine_input.addItem("MySQL distant", "mysql")
-        self.engine_input.currentIndexChanged.connect(self._toggle_engine_fields)
-        engine_form.addRow("Moteur:", self.engine_input)
-        layout.addLayout(engine_form)
+        role_form = QtWidgets.QFormLayout()
+        self.role_input = QtWidgets.QComboBox()
+        self.role_input.addItem("Ce PC est le serveur", "server")
+        self.role_input.addItem("Ce PC est un client", "client")
+        self.role_input.currentIndexChanged.connect(self._toggle_role_fields)
+        role_form.addRow("Rôle de ce poste:", self.role_input)
+        layout.addLayout(role_form)
 
-        self.sqlite_group = QtWidgets.QGroupBox("Configuration SQLite")
-        sqlite_form = QtWidgets.QFormLayout(self.sqlite_group)
-        self.sqlite_path_input = QtWidgets.QLineEdit()
-        sqlite_form.addRow("Chemin du fichier:", self.sqlite_path_input)
-        layout.addWidget(self.sqlite_group)
-
-        self.mysql_group = QtWidgets.QGroupBox("Configuration MySQL")
-        mysql_form = QtWidgets.QFormLayout(self.mysql_group)
-        self.host_input = QtWidgets.QLineEdit()
+        self.server_group = QtWidgets.QGroupBox("Configuration du PC serveur")
+        server_form = QtWidgets.QFormLayout(self.server_group)
+        self.server_ip_label = QtWidgets.QLabel()
+        self.server_ip_label.setWordWrap(True)
+        self.mysql_admin_user_input = QtWidgets.QLineEdit("root")
+        self.mysql_admin_password_input = QtWidgets.QLineEdit()
+        self.mysql_admin_password_input.setEchoMode(QtWidgets.QLineEdit.Password)
         self.port_input = QtWidgets.QSpinBox()
         self.port_input.setRange(1, 65535)
-        self.username_input = QtWidgets.QLineEdit()
-        self.password_input = QtWidgets.QLineEdit()
-        self.password_input.setEchoMode(QtWidgets.QLineEdit.Password)
         self.database_input = QtWidgets.QLineEdit()
-        mysql_form.addRow("Adresse IP / Hôte:", self.host_input)
-        mysql_form.addRow("Port:", self.port_input)
-        mysql_form.addRow("Utilisateur:", self.username_input)
-        mysql_form.addRow("Mot de passe:", self.password_input)
-        mysql_form.addRow("Base de données:", self.database_input)
-        layout.addWidget(self.mysql_group)
+        self.app_user_label = QtWidgets.QLabel(DEFAULT_DB_USER)
+        self.app_password_label = QtWidgets.QLabel("Compte applicatif partagé automatiquement avec les clients")
+        server_form.addRow("IP locale à communiquer aux clients:", self.server_ip_label)
+        server_form.addRow("Compte admin MySQL existant:", self.mysql_admin_user_input)
+        server_form.addRow("Mot de passe admin MySQL:", self.mysql_admin_password_input)
+        server_form.addRow("Port MySQL:", self.port_input)
+        server_form.addRow("Base de données:", self.database_input)
+        server_form.addRow("Compte applicatif partagé:", self.app_user_label)
+        server_form.addRow("Note:", self.app_password_label)
+        layout.addWidget(self.server_group)
+
+        self.client_group = QtWidgets.QGroupBox("Configuration du PC client")
+        client_form = QtWidgets.QFormLayout(self.client_group)
+        self.host_input = QtWidgets.QLineEdit()
+        self.client_port_input = QtWidgets.QSpinBox()
+        self.client_port_input.setRange(1, 65535)
+        self.client_database_label = QtWidgets.QLabel(DEFAULT_DB_NAME)
+        self.client_user_label = QtWidgets.QLabel(DEFAULT_DB_USER)
+        client_form.addRow("IP du PC serveur:", self.host_input)
+        client_form.addRow("Port MySQL:", self.client_port_input)
+        client_form.addRow("Base partagée:", self.client_database_label)
+        client_form.addRow("Compte applicatif partagé:", self.client_user_label)
+        layout.addWidget(self.client_group)
 
         buttons = QtWidgets.QDialogButtonBox()
         self.test_button = buttons.addButton("Tester la connexion", QtWidgets.QDialogButtonBox.ActionRole)
-        self.save_button = buttons.addButton("Enregistrer", QtWidgets.QDialogButtonBox.AcceptRole)
-        self.close_button = buttons.addButton("Fermer", QtWidgets.QDialogButtonBox.RejectRole)
+        self.save_button = buttons.addButton("Configurer", QtWidgets.QDialogButtonBox.AcceptRole)
+        close_label = "Quitter" if self.first_run else "Fermer"
+        self.close_button = buttons.addButton(close_label, QtWidgets.QDialogButtonBox.RejectRole)
         self.test_button.clicked.connect(self._test_connection)
         self.save_button.clicked.connect(self._save)
         self.close_button.clicked.connect(self.reject)
         layout.addWidget(buttons)
 
     def _load_values(self):
-        engine_index = max(0, self.engine_input.findData(self.settings['engine']))
-        self.engine_input.setCurrentIndex(engine_index)
-        self.sqlite_path_input.setText(self.settings['sqlite_path'])
-        self.host_input.setText(self.settings['mysql']['host'])
+        role = self.settings.get('deployment_role') or 'client'
+        role_index = max(0, self.role_input.findData(role))
+        self.role_input.setCurrentIndex(role_index)
+        self.server_ip_label.setText(", ".join(self.detected_ips))
+        self.host_input.setText(self.settings['server_host_hint'] or self.settings['mysql']['host'])
         self.port_input.setValue(int(self.settings['mysql']['port']))
-        self.username_input.setText(self.settings['mysql']['user'])
-        self.password_input.setText(self.settings['mysql']['password'])
         self.database_input.setText(self.settings['mysql']['database'])
+        self.client_port_input.setValue(int(self.settings['mysql']['port']))
+        self.client_database_label.setText(self.settings['mysql']['database'])
+        self.client_user_label.setText(DEFAULT_DB_USER)
         self.path_label.setText(f"Fichier de configuration: {self.config_path}")
 
-    def _toggle_engine_fields(self):
-        engine = self.engine_input.currentData()
-        self.sqlite_group.setVisible(engine == 'sqlite')
-        self.mysql_group.setVisible(engine == 'mysql')
+    def _toggle_role_fields(self):
+        role = self.role_input.currentData()
+        self.server_group.setVisible(role == 'server')
+        self.client_group.setVisible(role == 'client')
 
     def _collect_config(self) -> dict:
-        return {
-            'engine': self.engine_input.currentData(),
-            'sqlite_path': self.sqlite_path_input.text().strip(),
-            'mysql': {
-                'host': self.host_input.text().strip(),
-                'port': self.port_input.value(),
-                'user': self.username_input.text().strip(),
-                'password': self.password_input.text(),
-                'database': self.database_input.text().strip(),
-            },
-        }
+        role = self.role_input.currentData()
+        database_name = self.database_input.text().strip() or DEFAULT_DB_NAME
+        if role == 'server':
+            server_ip = self.detected_ips[0] if self.detected_ips else '127.0.0.1'
+            return build_server_database_config(server_ip=server_ip, database=database_name, port=self.port_input.value())
+
+        return build_client_database_config(server_ip=self.host_input.text().strip(), database=database_name, port=self.client_port_input.value())
 
     def _validate(self, config: dict) -> bool:
-        if config['engine'] == 'sqlite':
-            if not config['sqlite_path']:
-                QtWidgets.QMessageBox.warning(self, "Configuration invalide", "Le chemin du fichier SQLite est obligatoire.")
-                self.sqlite_path_input.setFocus()
-                return False
-            return True
-
         missing_fields = []
-        if not config['mysql']['host']:
-            missing_fields.append("Adresse IP / Hôte")
-        if not config['mysql']['user']:
-            missing_fields.append("Utilisateur")
+        if self.role_input.currentData() == 'server' and not self.mysql_admin_user_input.text().strip():
+            missing_fields.append("Compte admin MySQL")
+        if self.role_input.currentData() == 'client' and not config['mysql']['host']:
+            missing_fields.append("IP du PC serveur")
         if not config['mysql']['database']:
             missing_fields.append("Base de données")
         if missing_fields:
@@ -179,25 +196,51 @@ class DatabaseConfigDialog(QtWidgets.QDialog):
         if not self._validate(config):
             return
         try:
+            if self.role_input.currentData() == 'server':
+                bootstrap_mysql_server(
+                    self.mysql_admin_user_input.text().strip(),
+                    self.mysql_admin_password_input.text(),
+                    database=config['mysql']['database'],
+                    port=config['mysql']['port'],
+                )
             test_database_connection(config)
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Connexion impossible", f"Le test a échoué : {exc}")
             return
-        QtWidgets.QMessageBox.information(self, "Connexion réussie", "La connexion à la base de données est valide.")
+        if self.role_input.currentData() == 'server':
+            server_ip = self.detected_ips[0] if self.detected_ips else '127.0.0.1'
+            QtWidgets.QMessageBox.information(self, "Serveur prêt", f"Le serveur MySQL est prêt. Communique cette IP aux clients: {server_ip}")
+            return
+        QtWidgets.QMessageBox.information(self, "Connexion réussie", "La connexion au serveur MySQL est valide.")
 
     def _save(self):
         config = self._collect_config()
         if not self._validate(config):
             return
         try:
+            if self.role_input.currentData() == 'server':
+                bootstrap_mysql_server(
+                    self.mysql_admin_user_input.text().strip(),
+                    self.mysql_admin_password_input.text(),
+                    database=config['mysql']['database'],
+                    port=config['mysql']['port'],
+                )
+            test_database_connection(config)
             save_database_config(config, self.config_path)
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Enregistrement impossible", f"La configuration n'a pas pu être enregistrée : {exc}")
             return
 
-        QtWidgets.QMessageBox.information(
-            self,
-            "Configuration enregistrée",
-            "La configuration a été enregistrée. Déconnectez-vous puis reconnectez-vous pour ouvrir de nouvelles connexions avec ces paramètres.",
-        )
+        if self.role_input.currentData() == 'server':
+            server_ip = self.detected_ips[0] if self.detected_ips else '127.0.0.1'
+            message = (
+                "Ce poste est maintenant configuré comme serveur. "
+                f"Configure les autres postes en client avec l'IP {server_ip} pour partager les mêmes administrateurs et utilisateurs."
+            )
+        else:
+            message = "Ce poste est maintenant configuré comme client MySQL. Les administrateurs et utilisateurs seront partagés avec le serveur."
+        if not self.first_run:
+            message += " Déconnectez-vous puis reconnectez-vous pour recharger les connexions."
+
+        QtWidgets.QMessageBox.information(self, "Configuration enregistrée", message)
         self.accept()

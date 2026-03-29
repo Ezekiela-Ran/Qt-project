@@ -26,9 +26,12 @@ Notes:
 
 DATABASE CONFIGURATION:
 
-By default, the application uses a local SQLite database file and starts without MySQL.
+The application is intended to run on a shared MySQL database so that every PC uses the same administrators, users and business data.
 
-The application now also reads database settings from a JSON config file, which makes LAN deployment easier on packaged executables.
+At first launch, the software asks whether the current PC is:
+
+- the server PC
+- a client PC
 
 Administrators can also edit the database configuration directly from the application:
 
@@ -36,9 +39,10 @@ Administrators can also edit the database configuration directly from the applic
 
 This screen allows:
 
-- switching between SQLite and MySQL
-- entering the server IP address or host name
-- entering port, user, password and database name
+- configuring the PC as the MySQL server
+- configuring the PC as a MySQL client
+- entering the server IP address on client PCs
+- entering a local MySQL administrator account on the server PC for initial bootstrap
 - testing the connection before saving
 - saving the JSON config file locally on the workstation
 
@@ -53,21 +57,17 @@ Default local database path:
 Example config file:
 
         {
-            "engine": "sqlite",
-            "sqlite_path": "%LOCALAPPDATA%\\LFCA\\lfca.db",
+            "engine": "mysql",
+            "deployment_role": "client",
+            "server_host_hint": "192.168.1.10",
             "mysql": {
                 "host": "192.168.1.10",
                 "port": 3306,
-                "user": "lfca_user",
-                "password": "your_password",
+                "user": "lfca_app",
+                "password": "lfca_app",
                 "database": "invoicing"
             }
         }
-
-Optional environment variables for local mode:
-
-    DB_ENGINE=sqlite
-    DB_PATH=C:\path\to\lfca.db
 
 If you explicitly want to use MySQL instead, set:
 
@@ -95,19 +95,21 @@ Example (Linux/macOS):
 LOCAL NETWORK SHARED DATA (recommended):
 
 For multiple PCs on the same LAN, use a single MySQL server hosted on one machine in the network.
-Then configure every PC with the same MySQL connection settings.
+Then configure every PC with the same MySQL connection settings so all PCs share the same admins and users.
 
 Recommended setup:
 
 1. Choose one PC/server in the LAN to host MySQL.
-2. Open MySQL access on the LAN and create a dedicated application user.
+2. Install MySQL Server on that machine and make sure the MySQL service is running.
+3. Launch LFCA on that machine and choose that this PC is the server.
+4. Enter a local MySQL administrator account so LFCA can create the shared database and shared application user automatically.
 3. On each client PC, either:
 
      - open the application as an administrator and go to:
 
          Administration > Configuration base de données
 
-       then save the MySQL server IP, credentials and database name
+    then choose that this PC is a client and enter only the server IP
 
      - or manually edit:
 
@@ -118,19 +120,19 @@ Recommended setup:
              "engine": "mysql"
 
      with the same host/user/password/database.
-4. Disconnect and reconnect the application on each PC after saving the configuration.
-5. Start using the application on each PC: all clients will share the same data in real time.
+5. Start using the application on each PC: all clients will share the same administrators, users and business data in real time.
 
 Example LAN config:
 
         {
             "engine": "mysql",
-            "sqlite_path": "%LOCALAPPDATA%\\LFCA\\lfca.db",
+            "deployment_role": "client",
+            "server_host_hint": "192.168.1.10",
             "mysql": {
                 "host": "192.168.1.10",
                 "port": 3306,
-                "user": "lfca_user",
-                "password": "your_password",
+                "user": "lfca_app",
+                "password": "lfca_app",
                 "database": "invoicing"
             }
         }
@@ -138,8 +140,9 @@ Example LAN config:
 Notes:
 
 - Environment variables still override the JSON file if both are present.
-- A shared SQLite file on a network folder is not recommended for concurrent multi-PC use.
-- MySQL is the safe option for simultaneous access from several PCs.
+- SQLite local mode is no longer the intended deployment mode for multi-PC use.
+- Do not share a SQLite file between PCs on a network folder.
+- MySQL is required if you want the same administrators and users on every PC.
 - The application now uses explicit transactions for critical multi-step writes to reduce partial saves and counter collisions in multi-user MySQL mode.
 - The Ref.b.analyse allocation is serialized for MySQL to avoid duplicate values when several clients work at the same time.
 

@@ -7,12 +7,14 @@ from pathlib import Path
 from PySide6 import QtGui, QtWidgets
 from PySide6.QtWidgets import QMessageBox
 
+from models.database.db_config import database_config_requires_setup
+from models.database_manager import DatabaseManager
 from services.auth_service import AuthService
+from views.auth import DatabaseConfigDialog
+from views.auth import LoginDialog, SetupAdminDialog
 from views.foundation.window import Window
 from views.foundation.main_layout import MainLayout
 from views.foundation.globals import GlobalVariable
-from views.auth import LoginDialog, SetupAdminDialog
-from models.database_manager import DatabaseManager
 from utils.path_utils import resolve_resource_path
 
 
@@ -69,6 +71,9 @@ class ApplicationController:
         self.main_layout = None
 
     def start(self) -> int:
+        if not self._ensure_database_configuration():
+            return 0
+        DatabaseManager.create_tables()
         if not self._authenticate_and_show_main_view():
             return 0
         self.window.show()
@@ -106,6 +111,13 @@ class ApplicationController:
         self.main_layout = MainLayout(self.window, on_logout=self.handle_logout)
         self.window.window_layout.addWidget(self.main_layout)
 
+    def _ensure_database_configuration(self) -> bool:
+        if not database_config_requires_setup():
+            return True
+
+        dialog = DatabaseConfigDialog(self.window, first_run=True)
+        return dialog.exec() == QtWidgets.QDialog.Accepted
+
 
 def log_startup_error(exc: Exception) -> Path:
     log_path = Path(tempfile.gettempdir()) / "lfca-startup.log"
@@ -136,7 +148,6 @@ def show_startup_error(exc: Exception):
 
 if __name__ == "__main__":
     try:
-        DatabaseManager.create_tables()
         app = QtWidgets.QApplication([])
         apply_dark_theme(app)
         load_styles(app)
