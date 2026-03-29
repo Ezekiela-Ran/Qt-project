@@ -41,3 +41,6 @@ class ProductService:
 
     def delete_type(self, tid):
         return self.db.delete_type(tid)
+
+    def close(self):
+        self.db.close()

@@ -1,15 +1,18 @@
-from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QVBoxLayout, QLineEdit, QLabel, QWidget, QHBoxLayout
+from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QVBoxLayout, QLineEdit, QLabel, QWidget, QHBoxLayout, QSizePolicy
 from PySide6 import QtCore
 
 class ListRecordTemplate(QWidget):
 
     def __init__(self, headers : list[str], data: list = None, parent=None):
         super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.headers = headers
         self.data = data or []
         self.all_data = self.data.copy()  # Keep original data for filtering
         
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
         
         # Search box
         search_layout = QHBoxLayout()
@@ -22,6 +25,7 @@ class ListRecordTemplate(QWidget):
         
         # Table
         self.table = QTableWidget()
+        self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._setup_table()
         self._add_row()
         self.table.itemSelectionChanged.connect(self.on_item_selected)
@@ -35,7 +39,7 @@ class ListRecordTemplate(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSortingEnabled(True)  # Enable sorting
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(QHeaderView.Stretch)
         header.setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
 

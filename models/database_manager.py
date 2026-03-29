@@ -1,5 +1,4 @@
 from models.database.tables import Tables
-import mysql.connector
 
 class DatabaseManager(Tables):
     table_name = ""
@@ -27,66 +26,49 @@ class DatabaseManager(Tables):
             db.products_table()
             db.invoice_client_table()
             db.app_settings_table()
+            db.users_table()
             db.migrate_tables()  # Ajouter les colonnes manquantes
         finally:
             db.close()
 
+    def _ensure_column(self, table_name, column_name, definition):
+        if not self.column_exists(table_name, column_name):
+            self.cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
     def migrate_tables(self):
         # Migration pour ajouter les colonnes manquantes si elles n'existent pas
-        try:
-            self.cursor.execute("ALTER TABLE standard_invoice ADD COLUMN total DECIMAL(10,2) DEFAULT 0")
-        except mysql.connector.Error as e:
-            if e.errno not in (1060, 1061):  # Column already exists or duplicate key
-                raise
-        
-        try:
-            self.cursor.execute("ALTER TABLE proforma_invoice ADD COLUMN total DECIMAL(10,2) DEFAULT 0")
-        except mysql.connector.Error as e:
-            if e.errno not in (1060, 1061):  # Column already exists or duplicate key
-                raise
-        
-        try:
-            self.cursor.execute("ALTER TABLE standard_invoice ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-        except mysql.connector.Error as e:
-            if e.errno not in (1060, 1061):  # Column already exists or duplicate key
-                raise
-        
-        try:
-            self.cursor.execute("ALTER TABLE proforma_invoice ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-        except mysql.connector.Error as e:
-            if e.errno not in (1060, 1061):  # Column already exists or duplicate key
-                raise
+        self._ensure_column("standard_invoice", "total", "DECIMAL(10,2) DEFAULT 0")
+        self._ensure_column("proforma_invoice", "total", "DECIMAL(10,2) DEFAULT 0")
+        self._ensure_column("standard_invoice", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        self._ensure_column("proforma_invoice", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        self._ensure_column("invoice_client", "ref_b_analyse", "INT NULL")
+        self._ensure_column("invoice_client", "num_act", "VARCHAR(255) NULL")
+        self._ensure_column("users", "role", "VARCHAR(32) NOT NULL DEFAULT 'user'")
+        self._ensure_column("users", "is_active", "INT NOT NULL DEFAULT 1")
+        self._ensure_column("users", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
 
-        try:
-            self.cursor.execute("ALTER TABLE products MODIFY COLUMN num_act VARCHAR(191) NULL")
-        except mysql.connector.Error as e:
-            # Ignore harmless schema mismatch errors if already compatible.
-            if e.errno not in (1060, 1061):
-                raise
-
-        try:
-            self.cursor.execute("ALTER TABLE invoice_client ADD COLUMN ref_b_analyse INT NULL")
-        except mysql.connector.Error as e:
-            if e.errno not in (1060, 1061):
-                raise
-
-        try:
-            self.cursor.execute("ALTER TABLE invoice_client ADD COLUMN num_act VARCHAR(255) NULL")
-        except mysql.connector.Error as e:
-            if e.errno not in (1060, 1061):
-                raise
-
-        try:
-            self.cursor.execute("UPDATE products SET num_act = NULL WHERE num_act IS NOT NULL AND TRIM(num_act) IN ('', '0')")
+        if self.is_mysql:
             try:
+                self.cursor.execute("ALTER TABLE products MODIFY COLUMN num_act VARCHAR(191) NULL")
+            except Exception:
+                pass
+
+            try:
+                self.cursor.execute("ALTER TABLE users MODIFY COLUMN username VARCHAR(191) NOT NULL")
+            except Exception:
+                pass
+
+        self.cursor.execute("UPDATE products SET num_act = NULL WHERE num_act IS NOT NULL AND TRIM(num_act) IN ('', '0')")
+        self.cursor.execute("UPDATE users SET role = 'user' WHERE role IS NULL OR TRIM(role) = ''")
+        self.cursor.execute("UPDATE users SET is_active = 1 WHERE is_active IS NULL")
+
+        if self.index_exists("uk_products_num_act"):
+            if self.is_mysql:
                 self.cursor.execute("DROP INDEX uk_products_num_act ON products")
-            except mysql.connector.Error as drop_err:
-                if drop_err.errno != 1091:
-                    raise
-            self.cursor.execute("CREATE UNIQUE INDEX uk_products_num_act ON products(num_act)")
-        except mysql.connector.Error as e:
-            if e.errno not in (1061, 1062):
-                raise
+            else:
+                self.cursor.execute("DROP INDEX uk_products_num_act")
+        self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_products_num_act ON products(num_act)")
+        self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username ON users(username)")
 
     def fetch_all(self):
         cursor = self.conn.cursor(dictionary=True)
@@ -109,14 +91,15 @@ class DatabaseManager(Tables):
         cursor = self.conn.cursor()
         try:
             cursor.execute(
-                """
-                INSERT INTO app_settings (setting_key, setting_value)
-                VALUES (%s, %s)
-                ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
-                """,
-                (key, str(value)),
+                "UPDATE app_settings SET setting_value=%s WHERE setting_key=%s",
+                (str(value), key),
             )
-            self.conn.commit()
+            if cursor.rowcount == 0:
+                cursor.execute(
+                    "INSERT INTO app_settings (setting_key, setting_value) VALUES (%s, %s)",
+                    (key, str(value)),
+                )
+            self.commit_if_needed()
         finally:
             cursor.close()
 
@@ -149,12 +132,12 @@ class DatabaseManager(Tables):
                 "Initialisation impossible : des données existent déjà dans la base. Les compteurs ont déjà été initialisés et ne peuvent plus être modifiés."
             )
 
-        self.cursor.execute(f"ALTER TABLE standard_invoice AUTO_INCREMENT = {invoice_start}")
-        self.cursor.execute(f"ALTER TABLE proforma_invoice AUTO_INCREMENT = {invoice_start}")
-        self.set_setting("ref_b_analyse_start", ref_start)
-        self.set_setting("ref_b_analyse_last", ref_start - 1)
-        self.set_setting("invoice_id_start", invoice_start)
-        self.conn.commit()
+        with self.transaction():
+            self.reset_table_sequence("standard_invoice", invoice_start)
+            self.reset_table_sequence("proforma_invoice", invoice_start)
+            self.set_setting("ref_b_analyse_start", ref_start)
+            self.set_setting("ref_b_analyse_last", ref_start - 1)
+            self.set_setting("invoice_id_start", invoice_start)
 
     def get_max_ref_b_analyse(self):
         """Return the last allocated global ref_b_analyse (int) or configured start-1."""
@@ -176,37 +159,39 @@ class DatabaseManager(Tables):
             cursor.close()
 
     def allocate_next_ref_b_analyse(self):
-        """Atomically allocate and return the next global ref_b_analyse."""
-        cursor = self.conn.cursor()
+        """Allocate and return the next global ref_b_analyse."""
+        start = self.get_setting("ref_b_analyse_start", 1)
         try:
-            start = self.get_setting("ref_b_analyse_start", 1)
+            start_value = int(start)
+        except Exception:
+            start_value = 1
+
+        if self.is_mysql:
+            cursor = self.conn.cursor()
             try:
-                start_value = int(start)
-            except Exception:
-                start_value = 1
-            cursor.execute(
-                """
-                INSERT INTO app_settings (setting_key, setting_value)
-                VALUES (%s, %s)
-                ON DUPLICATE KEY UPDATE setting_value = setting_value
-                """,
-                ("ref_b_analyse_last", str(max(start_value - 1, 0))),
-            )
-            cursor.execute(
-                """
-                UPDATE app_settings
-                SET setting_value = LAST_INSERT_ID(CAST(setting_value AS UNSIGNED) + 1)
-                WHERE setting_key = %s
-                """,
-                ("ref_b_analyse_last",),
-            )
-            cursor.execute("SELECT LAST_INSERT_ID()")
-            row = cursor.fetchone()
-            next_ref = int(row[0]) if row and row[0] is not None else max(start_value, 1)
-            self.conn.commit()
+                with self.transaction():
+                    cursor.execute(
+                        "INSERT INTO app_settings (setting_key, setting_value) VALUES (%s, %s) "
+                        "ON DUPLICATE KEY UPDATE setting_value = setting_value",
+                        ("ref_b_analyse_last", str(start_value - 1)),
+                    )
+                    cursor.execute(
+                        "UPDATE app_settings "
+                        "SET setting_value = LAST_INSERT_ID(GREATEST(CAST(setting_value AS UNSIGNED), %s) + 1) "
+                        "WHERE setting_key = %s",
+                        (start_value - 1, "ref_b_analyse_last"),
+                    )
+                    cursor.execute("SELECT LAST_INSERT_ID()")
+                    row = cursor.fetchone()
+                    return int(row[0]) if row else start_value
+            finally:
+                cursor.close()
+
+        with self.transaction():
+            current = self.get_max_ref_b_analyse()
+            next_ref = max(current + 1, start_value)
+            self.set_setting("ref_b_analyse_last", next_ref)
             return next_ref
-        finally:
-            cursor.close()
 
     def insert_type(self, name: str):
         cursor = self.conn.cursor()
@@ -214,6 +199,92 @@ class DatabaseManager(Tables):
             query = "INSERT INTO product_type (product_type_name) VALUES (%s)"
             cursor.execute(query, (name,))
             self.conn.commit()
+            return cursor.lastrowid
+        finally:
+            cursor.close()
+
+    def count_users(self):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("SELECT COUNT(*) FROM users")
+            row = cursor.fetchone()
+            return row[0] if row else 0
+        finally:
+            cursor.close()
+
+    def count_admin_users(self):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("SELECT COUNT(*) FROM users WHERE role=%s", ("admin",))
+            row = cursor.fetchone()
+            return row[0] if row else 0
+        finally:
+            cursor.close()
+
+    def create_user(self, username, password_hash, role="user", is_active=True):
+        normalized_username = str(username or "").strip()
+        normalized_role = str(role or "user").strip().lower() or "user"
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO users (username, password_hash, role, is_active) VALUES (%s, %s, %s, %s)",
+                (normalized_username, password_hash, normalized_role, 1 if is_active else 0),
+            )
+            self.commit_if_needed()
+            return cursor.lastrowid
+        finally:
+            cursor.close()
+
+    def get_user_by_username(self, username, include_password_hash=True):
+        cursor = self.conn.cursor(dictionary=True)
+        try:
+            fields = "id, username, password_hash, role, is_active, created_at" if include_password_hash else "id, username, role, is_active, created_at"
+            cursor.execute(f"SELECT {fields} FROM users WHERE username=%s", (str(username or "").strip(),))
+            return cursor.fetchone()
+        finally:
+            cursor.close()
+
+    def get_user_by_id(self, user_id, include_password_hash=True):
+        cursor = self.conn.cursor(dictionary=True)
+        try:
+            fields = "id, username, password_hash, role, is_active, created_at" if include_password_hash else "id, username, role, is_active, created_at"
+            cursor.execute(f"SELECT {fields} FROM users WHERE id=%s", (user_id,))
+            return cursor.fetchone()
+        finally:
+            cursor.close()
+
+    def list_users(self):
+        cursor = self.conn.cursor(dictionary=True)
+        try:
+            cursor.execute("SELECT id, username, role, is_active, created_at FROM users ORDER BY username ASC")
+            return cursor.fetchall()
+        finally:
+            cursor.close()
+
+    def update_user(self, user_id, username, role, is_active=True):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE users SET username=%s, role=%s, is_active=%s WHERE id=%s",
+                (str(username or "").strip(), str(role or "user").strip().lower() or "user", 1 if is_active else 0, user_id),
+            )
+            self.commit_if_needed()
+        finally:
+            cursor.close()
+
+    def update_user_password(self, user_id, password_hash):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("UPDATE users SET password_hash=%s WHERE id=%s", (password_hash, user_id))
+            self.commit_if_needed()
+        finally:
+            cursor.close()
+
+    def delete_user(self, user_id):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("DELETE FROM users WHERE id=%s", (user_id,))
+            self.commit_if_needed()
         finally:
             cursor.close()
 
@@ -319,90 +390,85 @@ class DatabaseManager(Tables):
         self.conn.commit()
     
     def save_standard_invoice(self, company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, selected_products, selected_refs=None, selected_num_acts=None):
-        # Insérer la facture
-        self.cursor.execute(
-            "INSERT INTO standard_invoice (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total)
-        )
-        invoice_id = self.cursor.lastrowid
-        
-        # Insérer les produits sélectionnés
-        selected_refs = selected_refs or {}
-        selected_num_acts = selected_num_acts or {}
-        for product_id in selected_products:
-            product = self.get_product_by_id(product_id)
-            if product:
-                item_total = float(product['subtotal'] or 0)
-                ref_b_analyse = selected_refs.get(product_id)
-                num_act = self._normalize_num_act(selected_num_acts.get(product_id))
-                self.cursor.execute(
-                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (invoice_id, 'standard', product_id, ref_b_analyse, num_act, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
-                )
-        
-        self.conn.commit()
-        return invoice_id
+        with self.transaction():
+            self.cursor.execute(
+                "INSERT INTO standard_invoice (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total)
+            )
+            invoice_id = self.cursor.lastrowid
+
+            selected_refs = selected_refs or {}
+            selected_num_acts = selected_num_acts or {}
+            for product_id in selected_products:
+                product = self.get_product_by_id(product_id)
+                if product:
+                    item_total = float(product['subtotal'] or 0)
+                    ref_b_analyse = selected_refs.get(product_id)
+                    num_act = self._normalize_num_act(selected_num_acts.get(product_id))
+                    self.cursor.execute(
+                        "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        (invoice_id, 'standard', product_id, ref_b_analyse, num_act, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                    )
+
+            return invoice_id
 
     def update_standard_invoice(self, invoice_id, company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, selected_products, selected_refs=None, selected_num_acts=None):
-        self.cursor.execute(
-            "UPDATE standard_invoice SET company_name=%s, stat=%s, nif=%s, address=%s, date_issue=%s, date_result=%s, product_ref=%s, resp=%s, total=%s WHERE id=%s",
-            (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, invoice_id)
-        )
+        with self.transaction():
+            self.cursor.execute(
+                "UPDATE standard_invoice SET company_name=%s, stat=%s, nif=%s, address=%s, date_issue=%s, date_result=%s, product_ref=%s, resp=%s, total=%s WHERE id=%s",
+                (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, invoice_id)
+            )
 
-        # Mettre à jour les produits sélectionnés pour cette facture
-        self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'standard'))
-        selected_refs = selected_refs or {}
-        selected_num_acts = selected_num_acts or {}
-        for product_id in selected_products:
-            product = self.get_product_by_id(product_id)
-            if product:
-                item_total = float(product['subtotal'] or 0)
-                ref_b_analyse = selected_refs.get(product_id)
-                num_act = self._normalize_num_act(selected_num_acts.get(product_id))
-                self.cursor.execute(
-                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (invoice_id, 'standard', product_id, ref_b_analyse, num_act, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
-                )
-        self.conn.commit()
-        return invoice_id
+            self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'standard'))
+            selected_refs = selected_refs or {}
+            selected_num_acts = selected_num_acts or {}
+            for product_id in selected_products:
+                product = self.get_product_by_id(product_id)
+                if product:
+                    item_total = float(product['subtotal'] or 0)
+                    ref_b_analyse = selected_refs.get(product_id)
+                    num_act = self._normalize_num_act(selected_num_acts.get(product_id))
+                    self.cursor.execute(
+                        "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        (invoice_id, 'standard', product_id, ref_b_analyse, num_act, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                    )
+            return invoice_id
 
     def update_proforma_invoice(self, invoice_id, company_name, nif, stat, date, resp, total, selected_products):
-        self.cursor.execute(
-            "UPDATE proforma_invoice SET company_name=%s, nif=%s, stat=%s, date=%s, resp=%s, total=%s WHERE id=%s",
-            (company_name, nif, stat, date, resp, total, invoice_id)
-        )
-        self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'proforma'))
-        for product_id in selected_products:
-            product = self.get_product_by_id(product_id)
-            if product:
-                item_total = float(product['subtotal'] or 0)
-                self.cursor.execute(
-                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (invoice_id, 'proforma', product_id, None, None, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
-                )
-        self.conn.commit()
-        return invoice_id
+        with self.transaction():
+            self.cursor.execute(
+                "UPDATE proforma_invoice SET company_name=%s, nif=%s, stat=%s, date=%s, resp=%s, total=%s WHERE id=%s",
+                (company_name, nif, stat, date, resp, total, invoice_id)
+            )
+            self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'proforma'))
+            for product_id in selected_products:
+                product = self.get_product_by_id(product_id)
+                if product:
+                    item_total = float(product['subtotal'] or 0)
+                    self.cursor.execute(
+                        "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        (invoice_id, 'proforma', product_id, None, None, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                    )
+            return invoice_id
 
     def save_proforma_invoice(self, company_name, nif, stat, date, resp, total, selected_products):
-        # Insérer la facture
-        self.cursor.execute(
-            "INSERT INTO proforma_invoice (company_name, nif, stat, date, resp, total) VALUES (%s, %s, %s, %s, %s, %s)",
-            (company_name, nif, stat, date, resp, total)
-        )
-        invoice_id = self.cursor.lastrowid
-        
-        # Insérer les produits sélectionnés
-        for product_id in selected_products:
-            product = self.get_product_by_id(product_id)
-            if product:
-                item_total = float(product['subtotal'] or 0)
-                self.cursor.execute(
-                    "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (invoice_id, 'proforma', product_id, None, None, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
-                )
-        
-        self.conn.commit()
-        return invoice_id
+        with self.transaction():
+            self.cursor.execute(
+                "INSERT INTO proforma_invoice (company_name, nif, stat, date, resp, total) VALUES (%s, %s, %s, %s, %s, %s)",
+                (company_name, nif, stat, date, resp, total)
+            )
+            invoice_id = self.cursor.lastrowid
+
+            for product_id in selected_products:
+                product = self.get_product_by_id(product_id)
+                if product:
+                    item_total = float(product['subtotal'] or 0)
+                    self.cursor.execute(
+                        "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        (invoice_id, 'proforma', product_id, None, None, product['physico'], product['micro'], product['toxico'], product['subtotal'], item_total)
+                    )
+
+            return invoice_id
     
     def get_product_by_id(self, product_id):
         cursor = self.conn.cursor(dictionary=True)
@@ -446,18 +512,14 @@ class DatabaseManager(Tables):
         return self.cursor.fetchone()
     
     def delete_standard_invoice(self, invoice_id):
-        # Supprimer les items associés
-        self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'standard'))
-        # Supprimer la facture
-        self.cursor.execute("DELETE FROM standard_invoice WHERE id=%s", (invoice_id,))
-        self.conn.commit()
+        with self.transaction():
+            self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'standard'))
+            self.cursor.execute("DELETE FROM standard_invoice WHERE id=%s", (invoice_id,))
     
     def delete_proforma_invoice(self, invoice_id):
-        # Supprimer les items associés
-        self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'proforma'))
-        # Supprimer la facture
-        self.cursor.execute("DELETE FROM proforma_invoice WHERE id=%s", (invoice_id,))
-        self.conn.commit()
+        with self.transaction():
+            self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'proforma'))
+            self.cursor.execute("DELETE FROM proforma_invoice WHERE id=%s", (invoice_id,))
 
     def archive_and_reset(self, year=None):
         """Archive all non-archive tables into per-year archive tables,
@@ -470,45 +532,40 @@ class DatabaseManager(Tables):
         if year is None:
             year = datetime.date.today().year
         suffix = str(year)
-        try:
-            # Find all user tables that are not already archive tables
-            self.cursor.execute(
-                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME NOT LIKE '%archive_%'"
-            )
-            tables = [row['TABLE_NAME'] for row in self.cursor.fetchall()]
+        with self.transaction():
+            tables = self.list_live_tables()
 
-            # Create archive tables and copy data (archive all tables)
-            exclude_tables = {'products', 'product_type'}
+            exclude_tables = {'products', 'product_type', 'users'}
             for tbl in tables:
                 archive_name = f"{tbl}_archive_{suffix}"
-                self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {archive_name} LIKE {tbl}")
+                if self.is_mysql:
+                    self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {archive_name} LIKE {tbl}")
+                else:
+                    self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {archive_name} AS SELECT * FROM {tbl} WHERE 0")
                 self.cursor.execute(f"INSERT INTO {archive_name} SELECT * FROM {tbl}")
-            self.conn.commit()
 
-            # Truncate originals safely by disabling foreign key checks
-            # Do NOT truncate product-related tables (we archived them but keep live data)
-            self.cursor.execute("SET FOREIGN_KEY_CHECKS=0")
-            for tbl in tables:
-                if tbl in exclude_tables:
-                    continue
-                self.cursor.execute(f"TRUNCATE TABLE {tbl}")
-            self.cursor.execute("SET FOREIGN_KEY_CHECKS=1")
+            self.set_foreign_keys(False)
+            try:
+                for tbl in tables:
+                    if tbl in exclude_tables:
+                        continue
+                    self.cursor.execute(f"DELETE FROM {tbl}")
+                    self.reset_table_sequence(tbl, 1)
+            finally:
+                self.set_foreign_keys(True)
 
-            # Reset AUTO_INCREMENT on tables that have it
-            self.cursor.execute(
-                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS "
-                "WHERE TABLE_SCHEMA=DATABASE() AND EXTRA LIKE '%auto_increment%'"
-            )
-            auto_tables = {row['TABLE_NAME'] for row in self.cursor.fetchall()}
-            for tbl in auto_tables:
-                try:
-                    self.cursor.execute(f"ALTER TABLE {tbl} AUTO_INCREMENT=1")
-                except Exception:
-                    # ignore tables that can't be altered here
-                    pass
+            if self.is_mysql:
+                self.cursor.execute(
+                    "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA=DATABASE() AND EXTRA LIKE '%auto_increment%'"
+                )
+                auto_tables = {row['TABLE_NAME'] for row in self.cursor.fetchall()}
+                for tbl in auto_tables:
+                    try:
+                        self.reset_table_sequence(tbl, 1)
+                    except Exception:
+                        pass
 
-            # Reset ref_b_analyse values in products to 0 so counter restarts at 1
             try:
                 self.cursor.execute("UPDATE products SET ref_b_analyse=0")
             except Exception:
@@ -518,10 +575,5 @@ class DatabaseManager(Tables):
                 self.cursor.execute("DELETE FROM app_settings WHERE setting_key IN ('ref_b_analyse_start', 'invoice_id_start')")
             except Exception:
                 pass
-
-            self.conn.commit()
-        except Exception:
-            self.conn.rollback()
-            raise
 
   
