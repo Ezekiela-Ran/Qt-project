@@ -2,9 +2,12 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QTableWidgetItem, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QTableWidget, QAbstractItemView, QLineEdit, QLabel, QInputDialog, QMessageBox,
 )
 from PySide6.QtGui import QIntValidator, QColor
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from utils.path_utils import resolve_resource_path
 from views.foundation.globals import GlobalVariable
+
+
+CATALOG_REFRESH_INTERVAL_MS = 5000
 
 
 class ProductManager(QWidget):
@@ -21,10 +24,24 @@ class ProductManager(QWidget):
         self.selected_num_acts = {}  # dictionnaire {pid: num_act} pour standard
         self.loaded_record_locked = False
         self.can_manage_catalog = GlobalVariable.is_admin()
+        self.catalog_signature = None
 
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(8)
+
+        self.catalog_notification = QLabel("")
+        self.catalog_notification.setVisible(False)
+        self.catalog_notification.setWordWrap(True)
+        self.catalog_notification.setAlignment(Qt.AlignCenter)
+        self.catalog_notification.setStyleSheet(
+            "background-color: #264b2f; color: white; border: 1px solid #4b8a58; border-radius: 4px; padding: 6px 10px;"
+        )
+        root_layout.addWidget(self.catalog_notification)
 
         # cadre principale
         main_layout = QHBoxLayout()
+        root_layout.addLayout(main_layout)
 
         # Types
         type_list_layout = QVBoxLayout()
@@ -71,8 +88,11 @@ class ProductManager(QWidget):
         product_list_layout.addLayout(add_button_layout)
         product_list_layout.addWidget(self.product_table)
 
-        self.setLayout(main_layout)
         self._apply_stylesheet("styles/product_manager.qss")
+        self.catalog_notice_timer = QTimer(self)
+        self.catalog_notice_timer.setSingleShot(True)
+        self.catalog_notice_timer.timeout.connect(self.catalog_notification.hide)
+        self.catalog_refresh_timer = None
 
         # Connexions
         self.add_type_btn.clicked.connect(self.add_type)
@@ -82,7 +102,16 @@ class ProductManager(QWidget):
         self.type_list.itemSelectionChanged.connect(self.load_products)
 
         self._apply_role_permissions()
-        self.load_types()
+        has_selection = self.load_types()
+        if has_selection:
+            self.load_products()
+
+        if not self.can_manage_catalog:
+            self.catalog_signature = self._safe_catalog_signature()
+            self.catalog_refresh_timer = QTimer(self)
+            self.catalog_refresh_timer.setInterval(CATALOG_REFRESH_INTERVAL_MS)
+            self.catalog_refresh_timer.timeout.connect(self.refresh_catalog_silently)
+            self.catalog_refresh_timer.start()
 
     def _apply_role_permissions(self):
         self.add_type_btn.setVisible(self.can_manage_catalog)
@@ -90,7 +119,11 @@ class ProductManager(QWidget):
         self.del_type_btn.setVisible(self.can_manage_catalog)
         self.add_product_btn.setVisible(self.can_manage_catalog)
     
-    def load_types(self):
+    def load_types(self, selected_type_id=None):
+        if selected_type_id is None and self.type_list.currentItem():
+            selected_type_id = self.type_list.currentItem().data(Qt.UserRole)
+
+        self.type_list.blockSignals(True)
         self.type_list.clear()
         self.product_service.db.table_name = "product_type"
         types = self.product_service.db.fetch_all()
@@ -99,6 +132,8 @@ class ProductManager(QWidget):
             item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
             item.setTextAlignment(Qt.AlignCenter)
             self.type_list.addItem(item)
+            self.type_list.blockSignals(False)
+            return False
         else:
             for row in types:
                 tid = row["id"]
@@ -108,13 +143,35 @@ class ProductManager(QWidget):
                 item.setTextAlignment(Qt.AlignCenter)
                 self.type_list.addItem(item)
 
+        if selected_type_id is not None and self._set_current_type_by_id(selected_type_id):
+            self.type_list.blockSignals(False)
+            return True
+
+        for index in range(self.type_list.count()):
+            item = self.type_list.item(index)
+            if item and item.data(Qt.UserRole) is not None:
+                self.type_list.setCurrentRow(index)
+                self.type_list.blockSignals(False)
+                return True
+        self.type_list.blockSignals(False)
+        return False
+
+    def _set_current_type_by_id(self, type_id):
+        for index in range(self.type_list.count()):
+            item = self.type_list.item(index)
+            if item and item.data(Qt.UserRole) == type_id:
+                self.type_list.setCurrentRow(index)
+                return True
+        return False
+
     def add_type(self):
         if not self.can_manage_catalog:
             return
         name, ok = QInputDialog.getText(self, "Nouveau Type", "Nom du type:")
         if ok and name:
-            self.product_service.insert_type(name)
-            self.load_types()
+            new_type_id = self.product_service.insert_type(name)
+            if self.load_types(selected_type_id=new_type_id):
+                self.load_products()
 
     def edit_type(self):
         if not self.can_manage_catalog:
@@ -141,8 +198,10 @@ class ProductManager(QWidget):
         tid = item.data(Qt.UserRole)  # récupérer l'ID stocké
         try:
             self.product_service.delete_type(tid)
-            self.load_types()
-            self.product_table.setRowCount(0)
+            if self.load_types():
+                self.load_products()
+            else:
+                self.product_table.setRowCount(0)
         except ValueError as e:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Suppression impossible", str(e))
@@ -678,8 +737,12 @@ class ProductManager(QWidget):
     def load_products(self):
         self.product_table.setRowCount(0)
         if not self.type_list.currentItem():
+            self.selection_changed.emit()
             return
         tid = self.type_list.currentItem().data(Qt.UserRole)
+        if tid is None:
+            self.selection_changed.emit()
+            return
         products = self.product_service.get_products_by_type(tid)
         if not products:
             self.product_table.insertRow(0)
@@ -700,6 +763,48 @@ class ProductManager(QWidget):
                 self.add_product_row(pid, name, ref, num_act, physico, toxico, micro, subtotal)
         for row in range(self.product_table.rowCount()):
             self._update_row_action_state(row)
+        self.selection_changed.emit()
+
+    def _safe_catalog_signature(self):
+        try:
+            return self.product_service.db.get_catalog_signature()
+        except Exception:
+            return None
+
+    def refresh_catalog_silently(self):
+        if self.can_manage_catalog or not self.isVisible():
+            return
+
+        latest_signature = self._safe_catalog_signature()
+        if latest_signature is None:
+            return
+        if self.catalog_signature is None:
+            self.catalog_signature = latest_signature
+            return
+        if latest_signature == self.catalog_signature:
+            return
+
+        self.catalog_signature = latest_signature
+        self._reload_catalog_preserving_state()
+        self._show_catalog_notification("Le catalogue a été mis à jour automatiquement.")
+
+    def _reload_catalog_preserving_state(self):
+        current_type_id = None
+        current_item = self.type_list.currentItem()
+        if current_item is not None:
+            current_type_id = current_item.data(Qt.UserRole)
+
+        has_selection = self.load_types(selected_type_id=current_type_id)
+        if has_selection:
+            self.load_products()
+        else:
+            self.product_table.setRowCount(0)
+            self.selection_changed.emit()
+
+    def _show_catalog_notification(self, message):
+        self.catalog_notification.setText(message)
+        self.catalog_notification.setVisible(True)
+        self.catalog_notice_timer.start(4000)
 
     def _cancel_edit_if_active(self, row):
         """If a row is in edit mode (widgets not-readonly), cancel it cleanly."""
@@ -784,4 +889,9 @@ class ProductManager(QWidget):
                 self.setStyleSheet(file.read())
         except FileNotFoundError:
             print(f"Stylesheet {stylesheet_path} not found.")
+
+    def cleanup(self):
+        if self.catalog_refresh_timer is not None:
+            self.catalog_refresh_timer.stop()
+        self.catalog_notice_timer.stop()
 

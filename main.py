@@ -72,20 +72,82 @@ def exec_startup_dialog(dialog: QtWidgets.QDialog) -> int:
     return dialog.exec()
 
 
+class StartupSplash:
+    def __init__(self, app):
+        self.app = app
+        self._closed = False
+        image_path = resolve_resource_path("images/image.png")
+        pixmap = QtGui.QPixmap(str(image_path)) if image_path.exists() else QtGui.QPixmap()
+        if pixmap.isNull():
+            self.splash = None
+            return
+
+        self.splash = QtWidgets.QSplashScreen(
+            pixmap,
+            QtCore.Qt.WindowType.WindowStaysOnTopHint | QtCore.Qt.WindowType.FramelessWindowHint,
+        )
+        self.splash.setMask(pixmap.mask())
+
+    def show(self, message=""):
+        if self.splash is None:
+            return
+        self._closed = False
+        self.splash.show()
+        self.show_message(message)
+        QtCore.QTimer.singleShot(2000, self.close)
+
+    def show_message(self, message=""):
+        if self.splash is None:
+            return
+        self.splash.showMessage(
+            message,
+            QtCore.Qt.AlignmentFlag.AlignBottom | QtCore.Qt.AlignmentFlag.AlignHCenter,
+            QtGui.QColor("white"),
+        )
+        self.app.processEvents()
+
+    def finish(self, window):
+        if self.splash is None or self._closed:
+            return
+        self.splash.finish(window)
+        self._closed = True
+
+    def close(self):
+        if self.splash is None or self._closed:
+            return
+        self.splash.close()
+        self._closed = True
+
+
 class ApplicationController:
     def __init__(self, app):
         self.app = app
         self.window = Window()
         self.main_layout = None
+        self.splash = StartupSplash(app)
 
     def start(self) -> int:
-        if not self._ensure_database_configuration():
-            return 0
-        DatabaseManager.create_tables()
-        if not self._authenticate_and_show_main_view():
-            return 0
-        self.window.show()
-        return self.app.exec()
+        self.splash.show("Chargement de l'application...")
+        try:
+            self.splash.show_message("Chargement de la configuration...")
+            if not self._ensure_database_configuration():
+                self.splash.close()
+                return 0
+
+            self.splash.show_message("Initialisation de la base de données...")
+            DatabaseManager.create_tables()
+
+            self.splash.show_message("Authentification...")
+            if not self._authenticate_and_show_main_view():
+                self.splash.close()
+                return 0
+
+            self.window.show()
+            self.splash.finish(self.window)
+            return self.app.exec()
+        except Exception:
+            self.splash.close()
+            raise
 
     def handle_logout(self):
         GlobalVariable.clear_current_user()

@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QMessageBox, QInputDialog
+import datetime
 from views.foundation.head_layout import HeadLayout
 from views.foundation.body_layout import BodyLayout
 from views.components.menu_bar import MenuBar
@@ -52,11 +53,11 @@ class MainLayout(QWidget):
     def menubar_click_initialize_counters(self):
         db = DatabaseManager()
         try:
-            if db.has_business_data():
+            if db.has_invoice_history():
                 QMessageBox.warning(
                     self,
                     "Initialisation impossible",
-                    "Des données existent déjà dans la base. L'ID de facture et la Ref.b.analyse ont déjà été initialisés et ne peuvent plus être modifiés.",
+                    "Des factures existent déjà dans la base. L'ID de facture et la Ref.b.analyse ne peuvent plus être modifiés.",
                 )
                 return
 
@@ -97,17 +98,34 @@ class MainLayout(QWidget):
             db.close()
 
     def menubar_click_reset(self):
-        reply = QMessageBox.question(self, "Réinitialisation", "Confirmer la réinitialisation : les données actuelles seront archivées pour l'année courante et les compteurs seront remis à 1. Continuer ?",
-                                     QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            db = DatabaseManager()
-            try:
-                db.archive_and_reset()
-                QMessageBox.information(self, "Réinitialisation", "Archivage et réinitialisation terminés avec succès.")
-            except Exception as e:
-                QMessageBox.critical(self, "Erreur", f"La réinitialisation a échoué : {e}")
-            finally:
-                db.close()
+        db = DatabaseManager()
+        try:
+            current_year = datetime.date.today().year
+            if not db.can_archive_and_reset(current_year):
+                QMessageBox.information(
+                    self,
+                    "Réinitialisation indisponible",
+                    f"La réinitialisation a déjà été effectuée pour l'année {current_year}.",
+                )
+                return
+
+            reply = QMessageBox.question(
+                self,
+                "Réinitialisation",
+                "Confirmer la réinitialisation : les données actuelles seront archivées pour l'année courante et les compteurs seront remis à 1. Continuer ?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+            db.archive_and_reset(current_year)
+            QMessageBox.information(self, "Réinitialisation", "Archivage et réinitialisation terminés avec succès.")
+        except ValueError as exc:
+            QMessageBox.information(self, "Réinitialisation indisponible", str(exc))
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"La réinitialisation a échoué : {e}")
+        finally:
+            db.close()
 
     def menubar_click_manage_users(self):
         if not GlobalVariable.is_admin():

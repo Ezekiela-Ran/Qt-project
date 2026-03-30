@@ -179,10 +179,10 @@ def database_config_requires_setup() -> bool:
 
     config_file = Path(settings['config_file'])
     if not config_file.exists():
-        return False
+        return True
 
     if settings['engine'] == 'sqlite':
-        return False
+        return True
 
     if settings['engine'] != 'mysql':
         return True

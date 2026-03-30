@@ -123,14 +123,78 @@ class DatabaseManager(Tables):
         finally:
             cursor.close()
 
+    def has_invoice_history(self):
+        tables_to_check = (
+            "standard_invoice",
+            "proforma_invoice",
+            "invoice_client",
+        )
+        cursor = self.conn.cursor()
+        try:
+            for table_name in tables_to_check:
+                cursor.execute(f"SELECT EXISTS(SELECT 1 FROM {table_name} LIMIT 1)")
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return True
+            return False
+        finally:
+            cursor.close()
+
+    def are_document_counters_initialized(self):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) FROM app_settings WHERE setting_key IN (%s, %s)",
+                ("invoice_id_start", "ref_b_analyse_start"),
+            )
+            row = cursor.fetchone()
+            return bool(row and row[0] > 0)
+        finally:
+            cursor.close()
+
+    def get_last_archive_reset_year(self):
+        value = self.get_setting("last_archive_reset_year")
+        if value in (None, ""):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def can_archive_and_reset(self, year=None):
+        import datetime
+
+        target_year = int(year or datetime.date.today().year)
+        return self.get_last_archive_reset_year() != target_year
+
+    def get_catalog_signature(self):
+        cursor = self.conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) AS item_count, COALESCE(MAX(id), 0) AS max_id FROM product_type"
+            )
+            type_signature = cursor.fetchone() or {"item_count": 0, "max_id": 0}
+            cursor.execute(
+                "SELECT COUNT(*) AS item_count, COALESCE(MAX(id), 0) AS max_id FROM products"
+            )
+            product_signature = cursor.fetchone() or {"item_count": 0, "max_id": 0}
+            return {
+                "type_count": int(type_signature.get("item_count") or 0),
+                "type_max_id": int(type_signature.get("max_id") or 0),
+                "product_count": int(product_signature.get("item_count") or 0),
+                "product_max_id": int(product_signature.get("max_id") or 0),
+            }
+        finally:
+            cursor.close()
+
     def initialize_document_counters(self, invoice_start, ref_start):
         invoice_start = int(invoice_start)
         ref_start = int(ref_start)
         if invoice_start < 1 or ref_start < 1:
             raise ValueError("Les valeurs d'initialisation doivent être supérieures ou égales à 1.")
-        if self.has_business_data():
+        if self.has_invoice_history():
             raise ValueError(
-                "Initialisation impossible : des données existent déjà dans la base. Les compteurs ont déjà été initialisés et ne peuvent plus être modifiés."
+                "Initialisation impossible : des factures existent déjà dans la base. Les compteurs ne peuvent plus être modifiés."
             )
 
         with self.transaction():
@@ -532,6 +596,12 @@ class DatabaseManager(Tables):
         import datetime
         if year is None:
             year = datetime.date.today().year
+        year = int(year)
+        if not self.can_archive_and_reset(year):
+            raise ValueError(
+                f"La réinitialisation a déjà été effectuée pour l'année {year}."
+            )
+
         suffix = str(year)
         with self.transaction():
             tables = self.list_live_tables()
@@ -573,8 +643,12 @@ class DatabaseManager(Tables):
                 pass
 
             try:
-                self.cursor.execute("DELETE FROM app_settings WHERE setting_key IN ('ref_b_analyse_start', 'invoice_id_start')")
+                self.cursor.execute(
+                    "DELETE FROM app_settings WHERE setting_key IN ('ref_b_analyse_start', 'ref_b_analyse_last', 'invoice_id_start')"
+                )
             except Exception:
                 pass
+
+            self.set_setting("last_archive_reset_year", year)
 
   
