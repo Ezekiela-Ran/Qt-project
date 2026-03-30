@@ -3,12 +3,16 @@ from views.foundation.head_layout import HeadLayout
 from views.foundation.body_layout import BodyLayout
 from views.components.menu_bar import MenuBar
 from views.foundation.globals import GlobalVariable
+from views.auth import DatabaseConfigDialog, UserManagementDialog
 from models.database_manager import DatabaseManager
 
 class MainLayout(QWidget):
-    def __init__(self, parent):
+    def __init__(self, parent, on_logout=None):
         super().__init__(parent)
+        self.on_logout = on_logout
         self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(8)
         self.build_ui("standard")  # interface par défaut
 
     def build_ui(self, invoice_type: str):
@@ -21,10 +25,11 @@ class MainLayout(QWidget):
 
         # Head layout
         self.head_layout = HeadLayout(self)
-        self.head_layout.setMaximumHeight(200)
 
         # Body layout
         self.body_layout = BodyLayout(self, invoice_type)
+        self.head_layout.setSizePolicy(self.head_layout.sizePolicy().horizontalPolicy(), self.head_layout.sizePolicy().Policy.Expanding)
+        self.body_layout.setSizePolicy(self.body_layout.sizePolicy().horizontalPolicy(), self.body_layout.sizePolicy().Policy.Expanding)
 
         if invoice_type == "standard":
             GlobalVariable.invoice_type = invoice_type
@@ -35,7 +40,7 @@ class MainLayout(QWidget):
 
 
         # Ajout au layout principal
-        for widget, stretch in [(self.head_layout, 1), (self.body_layout, 1)]:
+        for widget, stretch in [(self.head_layout, 0), (self.body_layout, 1)]:
             self.layout.addWidget(widget, stretch)
 
     def menubar_click_standard(self):
@@ -104,10 +109,40 @@ class MainLayout(QWidget):
             finally:
                 db.close()
 
+    def menubar_click_manage_users(self):
+        if not GlobalVariable.is_admin():
+            QMessageBox.warning(self, "Accès refusé", "Seul un administrateur peut gérer les utilisateurs.")
+            return
+        dialog = UserManagementDialog(self, current_user=GlobalVariable.current_user)
+        dialog.exec()
+
+    def menubar_click_database_config(self):
+        if not GlobalVariable.is_admin():
+            QMessageBox.warning(self, "Accès refusé", "Seul un administrateur peut modifier la configuration de la base de données.")
+            return
+        dialog = DatabaseConfigDialog(self)
+        dialog.exec()
+
+    def menubar_click_logout(self):
+        if not callable(self.on_logout):
+            return
+        reply = QMessageBox.question(
+            self,
+            "Déconnexion",
+            "Voulez-vous vraiment vous déconnecter ?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self.on_logout()
+
     def clear_layout(self):
         while self.layout.count():
             child = self.layout.takeAt(0)
             if child.widget():
+                cleanup = getattr(child.widget(), "cleanup", None)
+                if callable(cleanup):
+                    cleanup()
                 child.widget().deleteLater()
             elif child.layout():
                 self.clear_sub_layout(child.layout())

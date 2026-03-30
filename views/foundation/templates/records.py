@@ -1,27 +1,37 @@
-from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QVBoxLayout, QLineEdit, QLabel, QWidget, QHBoxLayout
+from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QVBoxLayout, QLineEdit, QLabel, QWidget, QHBoxLayout, QSizePolicy
 from PySide6 import QtCore
 
 class ListRecordTemplate(QWidget):
 
     def __init__(self, headers : list[str], data: list = None, parent=None):
         super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.headers = headers
         self.data = data or []
         self.all_data = self.data.copy()  # Keep original data for filtering
         
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
         
         # Search box
         search_layout = QHBoxLayout()
+        search_layout.setContentsMargins(0, 0, 0, 4)
+        search_layout.setSpacing(8)
         self.search_label = QLabel("Rechercher:")
         self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Recherche rapide")
+        self.search_input.setMinimumWidth(180)
+        self.search_input.setMaximumWidth(280)
         self.search_input.textChanged.connect(self.filter_data)
         search_layout.addWidget(self.search_label)
-        search_layout.addWidget(self.search_input, 1)  # Take remaining space
+        search_layout.addWidget(self.search_input)
+        search_layout.addStretch(1)
         layout.addLayout(search_layout)
         
         # Table
         self.table = QTableWidget()
+        self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._setup_table()
         self._add_row()
         self.table.itemSelectionChanged.connect(self.on_item_selected)
@@ -35,7 +45,7 @@ class ListRecordTemplate(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSortingEnabled(True)  # Enable sorting
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(QHeaderView.Stretch)
         header.setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
 

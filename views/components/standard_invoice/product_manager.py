@@ -3,6 +3,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QIntValidator, QColor
 from PySide6.QtCore import Qt, Signal
+from utils.path_utils import resolve_resource_path
+from views.foundation.globals import GlobalVariable
 
 
 class ProductManager(QWidget):
@@ -18,6 +20,7 @@ class ProductManager(QWidget):
         self.selected_refs = {}  # dictionnaire {pid: ref_b_analyse} pour standard
         self.selected_num_acts = {}  # dictionnaire {pid: num_act} pour standard
         self.loaded_record_locked = False
+        self.can_manage_catalog = GlobalVariable.is_admin()
 
 
         # cadre principale
@@ -78,7 +81,14 @@ class ProductManager(QWidget):
         self.add_product_btn.clicked.connect(self.add_product)
         self.type_list.itemSelectionChanged.connect(self.load_products)
 
+        self._apply_role_permissions()
         self.load_types()
+
+    def _apply_role_permissions(self):
+        self.add_type_btn.setVisible(self.can_manage_catalog)
+        self.edit_type_btn.setVisible(self.can_manage_catalog)
+        self.del_type_btn.setVisible(self.can_manage_catalog)
+        self.add_product_btn.setVisible(self.can_manage_catalog)
     
     def load_types(self):
         self.type_list.clear()
@@ -99,12 +109,16 @@ class ProductManager(QWidget):
                 self.type_list.addItem(item)
 
     def add_type(self):
+        if not self.can_manage_catalog:
+            return
         name, ok = QInputDialog.getText(self, "Nouveau Type", "Nom du type:")
         if ok and name:
             self.product_service.insert_type(name)
             self.load_types()
 
     def edit_type(self):
+        if not self.can_manage_catalog:
+            return
         item = self.type_list.currentItem()
         if not item:
             return
@@ -119,6 +133,8 @@ class ProductManager(QWidget):
             item.setText(name)
 
     def del_type(self):
+        if not self.can_manage_catalog:
+            return
         item = self.type_list.currentItem()
         if not item:
             return
@@ -132,6 +148,8 @@ class ProductManager(QWidget):
             QMessageBox.warning(self, "Suppression impossible", str(e))
 
     def add_product(self):
+        if not self.can_manage_catalog:
+            return
         if self.loaded_record_locked:
             return
         if not self.type_list.currentItem():
@@ -219,7 +237,8 @@ class ProductManager(QWidget):
         btn_mod.clicked.connect(self.toggle_edit_from_sender)
         btn_sel.clicked.connect(lambda: self.toggle_select(pid, row))
 
-        btn_del.setEnabled(not self.loaded_record_locked)
+        btn_del.setEnabled(self.can_manage_catalog and not self.loaded_record_locked)
+        btn_mod.setEnabled(self.can_manage_catalog)
         btn_sel.setEnabled(not self.loaded_record_locked)
 
         # Réappliquer style si déjà sélectionné
@@ -232,6 +251,8 @@ class ProductManager(QWidget):
             self.apply_selection_style(row)
 
     def toggle_edit(self, row):
+        if not self.can_manage_catalog:
+            return
         designation_item = self.product_table.item(row, 0)
         if designation_item is None:
             return
@@ -282,6 +303,8 @@ class ProductManager(QWidget):
                 self.product_table.cellWidget(row, col).setReadOnly(True)
 
     def toggle_edit_from_sender(self):
+        if not self.can_manage_catalog:
+            return
         button = self.sender()
         if button is None:
             return
@@ -375,25 +398,32 @@ class ProductManager(QWidget):
 
     def set_loaded_record_locked(self, locked):
         self.loaded_record_locked = bool(locked)
-        self.add_product_btn.setEnabled(not self.loaded_record_locked)
+        self.add_product_btn.setEnabled(self.can_manage_catalog and not self.loaded_record_locked)
         for row in range(self.product_table.rowCount()):
             self._update_row_action_state(row)
 
     def _update_row_action_state(self, row):
         if self.invoice_type == "standard":
             btn_del_col = 7
+            btn_mod_col = 8
             btn_sel_col = 9
         else:
             btn_del_col = 5
+            btn_mod_col = 6
             btn_sel_col = 7
         btn_del = self.product_table.cellWidget(row, btn_del_col)
+        btn_mod = self.product_table.cellWidget(row, btn_mod_col)
         btn_sel = self.product_table.cellWidget(row, btn_sel_col)
         if btn_del:
-            btn_del.setEnabled(not self.loaded_record_locked)
+            btn_del.setEnabled(self.can_manage_catalog and not self.loaded_record_locked)
+        if btn_mod:
+            btn_mod.setEnabled(self.can_manage_catalog)
         if btn_sel:
             btn_sel.setEnabled(not self.loaded_record_locked)
 
     def delete_product_row(self, pid, row):
+        if not self.can_manage_catalog:
+            return
         if self.loaded_record_locked:
             return
         if self.product_service.db.product_is_used_in_records(pid):
@@ -750,7 +780,7 @@ class ProductManager(QWidget):
 
     def _apply_stylesheet(self, stylesheet_path):
         try:
-            with open(stylesheet_path, "r", encoding="utf-8") as file:
+            with open(resolve_resource_path(stylesheet_path), "r", encoding="utf-8") as file:
                 self.setStyleSheet(file.read())
         except FileNotFoundError:
             print(f"Stylesheet {stylesheet_path} not found.")

@@ -1,0 +1,36 @@
+QLineEdit {
+    font-family: "Times New Roman";
+    font-size: 18px;
+    margin: 2px;
+    padding: 0px;              
+    color: #032429;            
+    background-color: #FFFFFF;
+    border: none;
+    height: 2em;
+    border-radius: 2px;
+}
+
+QDateEdit {
+    font-family: "Times New Roman";
+    font-size: 18px;
+    margin: 2px;
+    padding: 0px;
+    color: #032429;
+    background-color: #FFFFFF;
+    border: none;
+    height: 2em;
+    border-radius: 2px;
+}
+
+QLineEdit:read-only,
+QDateEdit:read-only {
+    background-color: #FFFFFF;
+    color: #032429;
+}
+
+QLabel {
+    margin: 2px;
+    padding: 0px;
+    color: white;            
+}
+

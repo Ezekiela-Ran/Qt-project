@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QMessageBox, QLineEdit, QDateEdit,
 )
 from PySide6.QtCore import Qt, QDate
-from PySide6.QtGui import QColor
 
 from views.certificate.certificate_printer import CertificatePrinter
 
@@ -35,22 +34,20 @@ _COL_COUNT          = 14
 
 _HEADERS = [
     "Désignation",
-    "Quantité",
-    "Qté Analysée",
-    "N° Lot",
+    "Quantité *",
+    "Qté Analysée *",
+    "N° Lot *",
     "N° Acte",
-    "N° Cert",
-    "Classe",
-    "Date Prod.",
-    "Date Péremp.",
+    "N° Cert *",
+    "Classe *",
+    "Date de production",
+    "Date de péremption",
     "N° Prélèvement",
     "Date PV",
     "CC",
     "CNC",
     "Imprimer",
 ]
-
-_GREEN = "#c8f7c5"
 
 
 class CertificateDialog(QDialog):
@@ -73,14 +70,14 @@ class CertificateDialog(QDialog):
         self.db_manager = db_manager
         self.product_manager = product_manager
         self._rows: list[dict] = []
-        self._printed_pids: set = set()
+        self._printer = CertificatePrinter(self)
 
         self.setWindowTitle("Certificats — CC / CNC")
-        self.setMinimumSize(1200, 420)
         self.setModal(True)
 
         self._build_ui()
         self._load_products()
+        self._apply_screen_geometry()
 
     # ------------------------------------------------------------------
     # Construction de l'interface
@@ -97,6 +94,13 @@ class CertificateDialog(QDialog):
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-weight: bold; font-size: 13px; margin-bottom: 4px;")
         layout.addWidget(title)
+
+        required_note = QLabel(
+            "Les champs marqués * sont obligatoires. N° Acte, Date de production, Date de péremption, N° Prélèvement et Date PV sont optionnels."
+        )
+        required_note.setAlignment(Qt.AlignCenter)
+        required_note.setStyleSheet("color: #2F5A8F; font-weight: bold; margin-bottom: 6px;")
+        layout.addWidget(required_note)
 
         self._table = QTableWidget()
         self._table.setColumnCount(_COL_COUNT)
@@ -121,12 +125,33 @@ class CertificateDialog(QDialog):
             _COL_DATE_PV,
         ):
             hdr.setSectionResizeMode(col, QHeaderView.Interactive)
-            self._table.setColumnWidth(col, 110)
+            self._table.setColumnWidth(col, 140)
+        self._table.setColumnWidth(_COL_NUM_PRELEV, 160)
+        self._table.setColumnWidth(_COL_DATE_PROD, 150)
+        self._table.setColumnWidth(_COL_DATE_PEREMP, 150)
+        self._table.setColumnWidth(_COL_DATE_PV, 140)
         hdr.setSectionResizeMode(_COL_CC, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(_COL_CNC, QHeaderView.ResizeToContents)
+
         hdr.setSectionResizeMode(_COL_IMPRIMER, QHeaderView.ResizeToContents)
 
         layout.addWidget(self._table)
+
+    def _apply_screen_geometry(self):
+        parent_window = self.parentWidget().window() if self.parentWidget() else None
+        screen = parent_window.screen() if parent_window else self.screen()
+        if screen is None:
+            self.resize(1600, 520)
+            return
+
+        available_geometry = screen.availableGeometry()
+        target_height = min(max(520, self.sizeHint().height()), available_geometry.height())
+        self.setGeometry(
+            available_geometry.x(),
+            available_geometry.y(),
+            available_geometry.width(),
+            target_height,
+        )
 
     def _load_products(self):
         self._table.setRowCount(len(self.selected_products))
@@ -139,7 +164,7 @@ class CertificateDialog(QDialog):
             self._add_row(i, pid, name, num_acte)
 
     def _add_row(self, row_index: int, pid, name: str, num_acte: str = ""):
-        """Ajoute une ligne avec champs de saisie et boutons CC / CNC / Imprimer."""
+        """Ajoute une ligne avec champs de saisie et choix CC / CNC."""
         item = QTableWidgetItem(name)
         item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self._table.setItem(row_index, _COL_DESIGNATION, item)
@@ -176,8 +201,8 @@ class CertificateDialog(QDialog):
 
         btn_print = QPushButton("Imprimer")
         btn_print.setObjectName("certificatePrintButton")
-        self._table.setCellWidget(row_index, _COL_IMPRIMER, btn_print)
         btn_print.clicked.connect(lambda _, r=row_index: self._on_row_print_clicked(r))
+        self._table.setCellWidget(row_index, _COL_IMPRIMER, btn_print)
 
         self._rows.append({
             "pid":              pid,
@@ -210,12 +235,18 @@ class CertificateDialog(QDialog):
     def _make_date_edit() -> QDateEdit:
         edit = QDateEdit()
         edit.setCalendarPopup(True)
+        edit.setDateRange(QDate(1900, 1, 1), QDate(7999, 12, 31))
         edit.setDisplayFormat("dd/MM/yyyy")
-        edit.setDate(QDate.currentDate())
+        edit.setSpecialValueText("")
+        edit.setDate(edit.minimumDate())
         return edit
 
+    @staticmethod
+    def _date_edit_value(edit: QDateEdit) -> str:
+        return "" if edit.date() == edit.minimumDate() else edit.date().toString("dd/MM/yyyy")
+
     # ------------------------------------------------------------------
-    # Logique d'impression par ligne
+    # Logique d'impression
     # ------------------------------------------------------------------
 
     def _row_extras(self, row_index: int) -> dict:
@@ -227,10 +258,10 @@ class CertificateDialog(QDialog):
             "num_acte":          r["num_acte_edit"].text().strip(),
             "num_cert":          r["num_cert_edit"].text().strip(),
             "classe":            r["classe_edit"].text().strip(),
-            "date_production":   r["date_prod_edit"].date().toString("dd/MM/yyyy"),
-            "date_peremption":   r["date_peremp_edit"].date().toString("dd/MM/yyyy"),
+            "date_production":   self._date_edit_value(r["date_prod_edit"]),
+            "date_peremption":   self._date_edit_value(r["date_peremp_edit"]),
             "num_prelevement":   r["num_prelev_edit"].text().strip(),
-            "date_pv":           r["date_pv_edit"].date().toString("dd/MM/yyyy"),
+            "date_pv":           self._date_edit_value(r["date_pv_edit"]),
             "analyse":           self._build_analyse_text(r["pid"]),
         }
 
@@ -242,7 +273,6 @@ class CertificateDialog(QDialog):
             ("N° Lot", r["num_lot_edit"].text().strip(), r["num_lot_edit"]),
             ("N° Cert", r["num_cert_edit"].text().strip(), r["num_cert_edit"]),
             ("Classe", r["classe_edit"].text().strip(), r["classe_edit"]),
-            ("N° Prélèvement", r["num_prelev_edit"].text().strip(), r["num_prelev_edit"]),
         ]
 
         for label, value, widget in required_fields:
@@ -310,44 +340,31 @@ class CertificateDialog(QDialog):
             self._to_float(product.get("toxico", 0)),
         )
 
+    def _selected_certificate_type(self, row: dict) -> str | None:
+        if row["cc_cb"].isChecked():
+            return "CC"
+        if row["cnc_cb"].isChecked():
+            return "CNC"
+        return None
+
     def _on_row_print_clicked(self, row_index: int):
-        r = self._rows[row_index]
-        if r["cc_cb"].isChecked():
-            cert_type = "CC"
-        elif r["cnc_cb"].isChecked():
-            cert_type = "CNC"
-        else:
+        row = self._rows[row_index]
+        cert_type = self._selected_certificate_type(row)
+        if cert_type is None:
             QMessageBox.warning(
                 self,
                 "Type manquant",
-                f"Veuillez sélectionner CC ou CNC pour « {r['name']} ».",
+                f"Veuillez sélectionner CC ou CNC pour « {row['name']} ».",
             )
             return
 
         if not self._validate_required_fields(row_index):
             return
 
-        extras = self._row_extras(row_index)
-        printer = CertificatePrinter(self)
-        printer.print_certificates(self.form, [(r["pid"], r["name"], cert_type, extras)])
-
-        # Marquer la ligne comme imprimée (bordure verte)
-        self._printed_pids.add(r["pid"])
-        self._apply_row_green(row_index)
-
-    # ------------------------------------------------------------------
-    # Coloriage vert des lignes déjà imprimées
-    # ------------------------------------------------------------------
-
-    def _apply_row_green(self, row_index: int):
-        """Colore en vert le fond de toute la ligne (items + widgets)."""
-        item = self._table.item(row_index, _COL_DESIGNATION)
-        if item:
-            item.setBackground(QColor(_GREEN))
-        for col in range(1, _COL_COUNT):
-            widget = self._table.cellWidget(row_index, col)
-            if widget:
-                _set_widget_bg(widget, _GREEN)
+        self._printer.print_certificates(
+            self.form,
+            [(row["pid"], row["name"], cert_type, self._row_extras(row_index))],
+        )
 
 
 # ------------------------------------------------------------------
@@ -364,10 +381,3 @@ def _wire_exclusive(cb_a: QCheckBox, cb_b: QCheckBox):
             _a.blockSignals(True); _a.setChecked(False); _a.blockSignals(False)
     cb_a.toggled.connect(on_a)
     cb_b.toggled.connect(on_b)
-
-
-def _set_widget_bg(widget: QWidget, color_hex: str):
-    """Applique récursivement la couleur de fond sur un widget et ses enfants QWidget."""
-    widget.setStyleSheet(f"background-color: {color_hex};")
-    for child in widget.findChildren(QWidget):
-        child.setStyleSheet(f"background-color: {color_hex};")

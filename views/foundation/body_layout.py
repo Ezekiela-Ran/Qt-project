@@ -14,6 +14,7 @@ from views.foundation.body_actions.print_invoice_action import PrintInvoiceActio
 from views.foundation.body_actions.certificate_action import CertificateAction
 from views.foundation.body_actions.save_invoice_action import SaveInvoiceAction
 from views.foundation.body_actions.update_total_display_action import UpdateTotalDisplayAction
+from utils.path_utils import resolve_resource_path
 
 class BodyLayout(QtWidgets.QWidget):
     def __init__(self, parent=None, invoice_type="standard"):
@@ -117,6 +118,20 @@ class BodyLayout(QtWidgets.QWidget):
     def preview_invoice(self):
         PreviewInvoiceAction.execute(self)
 
+    def cleanup(self):
+        for service_name in ("invoice_service", "product_service", "db_manager"):
+            service = getattr(self, service_name, None)
+            close = getattr(service, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+
+    def closeEvent(self, event):
+        self.cleanup()
+        super().closeEvent(event)
+
     def print_invoice(self):
         PrintInvoiceAction.execute(self)
 
@@ -125,7 +140,7 @@ class BodyLayout(QtWidgets.QWidget):
 
     def _apply_stylesheet(self, stylesheet_path):
         try:
-            with open(stylesheet_path, 'r', encoding='utf-8') as f:
+            with open(resolve_resource_path(stylesheet_path), 'r', encoding='utf-8') as f:
                 stylesheet = f.read()
             self.setStyleSheet(self.styleSheet() + "\n" + stylesheet)
         except FileNotFoundError:

@@ -1,0 +1,81 @@
+/* Styles impression facture — unités pt uniquement, readable spacing */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: "Times New Roman", serif;
+    font-size: 10pt;
+    color: #000;
+    line-height: 1.5;
+}
+
+h2 {
+    margin: 4pt 0;
+}
+
+table {
+    width: 100%;
+    margin: 0;
+}
+
+.invoice-root {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+}
+
+/* Tableau principal des lignes produits */
+.invoice-table {
+    width: 100%;
+    border-collapse: collapse;
+    page-break-inside: auto;
+    margin: 4pt 0 0 0;
+    table-layout: fixed;
+}
+
+.invoice-table th,
+.invoice-table td {
+    border: 1px solid #000;
+    padding: 6pt 6pt;
+    vertical-align: middle;
+    word-wrap: break-word;
+    line-height: 1.5;
+    min-height: 28pt;
+    box-sizing: border-box;
+}
+
+.invoice-table th {
+    text-align: center;
+}
+
+.invoice-table thead {
+    display: table-header-group;
+}
+
+.invoice-table tbody tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+}
+
+.invoice-table tfoot tr {
+    border-top: 1.5px solid #000;
+}
+
+/* Pied de page */
+.invoice-footer {
+    margin-top: 12pt;
+    font-style: italic;
+    font-size: 10pt;
+    line-height: 1.6;
+}

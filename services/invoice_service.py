@@ -27,3 +27,6 @@ class InvoiceService:
 
     def delete_proforma_invoice(self, invoice_id):
         return self.db.delete_proforma_invoice(invoice_id)
+
+    def close(self):
+        self.db.close()

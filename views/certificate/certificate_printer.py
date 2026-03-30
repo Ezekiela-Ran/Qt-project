@@ -16,6 +16,7 @@ from PySide6.QtGui import QTextDocument, QPainter, QPageSize, QPageLayout
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 from PySide6.QtPdf import QPdfDocument
+from utils.path_utils import resolve_resource_path
 
 
 _TITLES = {
@@ -38,34 +39,33 @@ class CertificatePrinter:
     # ------------------------------------------------------------------
 
     def _resolve_logo_sources(self) -> dict:
-      base = Path(__file__).resolve().parent.parent.parent / "images"
-      mapping = {
-        "left": base / "unnamed.png",
-        "center": base / "unnamed-1.png",
-        "right": base / "image.png",
-      }
-      return {
-        key: path.as_uri() if path.exists() else ""
-        for key, path in mapping.items()
-      }
+        mapping = {
+            "left": resolve_resource_path("images/unnamed.png"),
+            "center": resolve_resource_path("images/unnamed-1.png"),
+            "right": resolve_resource_path("images/image.png"),
+        }
+        return {
+            key: path.as_uri() if path.exists() else ""
+            for key, path in mapping.items()
+        }
 
     @staticmethod
     def _uri_to_local_path(path_or_uri: str) -> str:
-      text = str(path_or_uri or "").strip()
-      if not text:
-        return ""
-      if not text.startswith("file://"):
-        return text
+        text = str(path_or_uri or "").strip()
+        if not text:
+            return ""
+        if not text.startswith("file://"):
+            return text
 
-      parsed = urlparse(text)
-      local_path = unquote(parsed.path or "")
-      if local_path.startswith("/") and len(local_path) > 2 and local_path[2] == ":":
-        local_path = local_path[1:]
-      return local_path
+        parsed = urlparse(text)
+        local_path = unquote(parsed.path or "")
+        if local_path.startswith("/") and len(local_path) > 2 and local_path[2] == ":":
+            local_path = local_path[1:]
+        return local_path
 
     def _load_css(self) -> str:
         try:
-            with open("styles/certificate_print.css", "r", encoding="utf-8") as f:
+            with open(resolve_resource_path("styles/certificate_print.css"), "r", encoding="utf-8") as f:
                 return f.read()
         except FileNotFoundError:
             return ""
@@ -92,7 +92,25 @@ class CertificatePrinter:
                 form.address_input.text().strip() if hasattr(form, "address_input") else ""
             ),
             "date":         escape(date_str),
+            "date_result":  escape(
+                form.date_result_input.date().toString("dd/MM/yyyy")
+                if hasattr(form, "date_result_input") else ""
+            ),
+            "product_ref":  escape(
+                form.product_ref_input.text().strip()
+                if hasattr(form, "product_ref_input") else ""
+            ),
         }
+
+    @staticmethod
+    def _build_proces_verbal(num_prelevement: str, date_pv: str, year_two_digits: str) -> str:
+        if num_prelevement and date_pv:
+            return f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
+        if num_prelevement:
+            return f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
+        if date_pv:
+            return date_pv
+        return ""
 
     # ------------------------------------------------------------------
     # Génération HTML
@@ -103,7 +121,7 @@ class CertificatePrinter:
         cert_type: str,
         product_name: str,
         fd: dict,
-      logos: dict,
+        logos: dict,
         is_last: bool,
         extras: dict | None = None,
     ) -> str:
@@ -145,31 +163,31 @@ class CertificatePrinter:
         year_two_digits = date.today().strftime("%y")
         header_number = f"N°/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
         if num_cert:
-          header_number = f"N°{num_cert}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
+            header_number = f"N°{num_cert}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
 
-        proces_verbal = ""
-        if num_prelevement and date_pv:
-          proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
-        elif num_prelevement:
-          proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
-        elif date_pv:
-          proces_verbal = date_pv
+        proces_verbal = escape(
+            self._build_proces_verbal(
+                extras.get("num_prelevement", ""),
+                extras.get("date_pv", ""),
+                year_two_digits,
+            )
+        )
 
         if not reference:
             reference = f"N°/{year_two_digits}/{num_acte}"
 
         left_logo = (
-          f'<img src="{logos.get("left", "")}" style="width:44px;height:44px;object-fit:contain;">'
+            f'<img src="{logos.get("left", "")}" style="width:44px;height:44px;object-fit:contain;">'
             if logos.get("left")
             else ""
         )
         center_logo = (
-          f'<img src="{logos.get("center", "")}" style="width:104px;height:36px;object-fit:contain;">'
+            f'<img src="{logos.get("center", "")}" style="width:104px;height:36px;object-fit:contain;">'
             if logos.get("center")
             else ""
         )
         right_logo = (
-          f'<img src="{logos.get("right", "")}" style="width:60px;height:50px;object-fit:contain;">'
+            f'<img src="{logos.get("right", "")}" style="width:60px;height:50px;object-fit:contain;">'
             if logos.get("right")
             else ""
         )
@@ -213,11 +231,22 @@ class CertificatePrinter:
     <tr><td><b>Classe</b></td><td>:</td><td><b>{classe}</b></td></tr>
     <tr><td><b>Quantité</b></td><td>:</td><td><b>{quantite}</b>  <span style="display:inline-block;width:24pt;"></span>
       <b>Quantité Analysée</b> : <b>{quantite_analysee}</b></td></tr>
+    <tr><td><b>N° Certificat</b></td><td>:</td><td><b>{num_cert}</b></td></tr>
+    <tr><td><b>N° Acte</b></td><td>:</td><td><b>{num_acte}</b></td></tr>
     <tr><td><b>Date de production</b></td><td>:</td><td><b>{date_production}</b></td></tr>
     <tr><td><b>Date de péremption</b></td><td>:</td><td><b>{date_peremption}</b></td></tr>
     <tr><td><b>Lot</b></td><td>:</td><td><b>{num_lot}</b></td></tr>
+    <tr><td><b>N° Prélèvement</b></td><td>:</td><td><b>{num_prelevement}</b></td></tr>
+    <tr><td><b>Date PV</b></td><td>:</td><td><b>{date_pv}</b></td></tr>
     <tr><td><b>Procès-verbal de prélèvement</b></td><td>:</td><td><b>{proces_verbal}</b></td></tr>
     <tr><td><b>Société / Etablissement</b></td><td>:</td><td><b>{fd['company_name']}</b></td></tr>
+    <tr><td><b>Responsable</b></td><td>:</td><td><b>{fd['responsable']}</b></td></tr>
+    <tr><td><b>Statistique</b></td><td>:</td><td><b>{fd['stat']}</b></td></tr>
+    <tr><td><b>NIF</b></td><td>:</td><td><b>{fd['nif']}</b></td></tr>
+    <tr><td><b>Adresse</b></td><td>:</td><td><b>{fd['address']}</b></td></tr>
+    <tr><td><b>Date d'émission</b></td><td>:</td><td><b>{fd['date']}</b></td></tr>
+    <tr><td><b>Date de résultat</b></td><td>:</td><td><b>{fd['date_result']}</b></td></tr>
+    <tr><td><b>Ref produit</b></td><td>:</td><td><b>{fd['product_ref']}</b></td></tr>
     <tr><td><b>Analyse</b></td><td>:</td><td><b>{escape(analyse_sentence)}</b></td></tr>
     <tr><td><b>Référence</b></td><td>:</td><td><b>{reference}</b></td></tr>
   </table>
@@ -275,7 +304,7 @@ class CertificatePrinter:
             extras = entry[3] if len(entry) > 3 else {}
             pages.append(
                 self._render_single_certificate(
-                  cert_type, product_name, fd, logos,
+                    cert_type, product_name, fd, logos,
                     i == len(assignments) - 1, extras,
                 )
             )
@@ -295,177 +324,243 @@ class CertificatePrinter:
     def _generate_pdf_with_reportlab(self, form, assignments: list[tuple], output_path: str):
         try:
             from reportlab.lib.pagesizes import A4
+            from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_RIGHT
             from reportlab.lib.units import mm
             from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, Image
+            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, Image, PageBreak
             from reportlab.lib import colors
+
             fd = self._extract_form_data(form)
-            entry = assignments[0]
-            pid, product_name, cert_type = entry[0], entry[1], entry[2]
-            extras = entry[3] if len(entry) > 3 else {}
-            file_path = output_path
             doc = SimpleDocTemplate(
-                file_path,
+                output_path,
                 pagesize=A4,
-                rightMargin=16*mm,
-                leftMargin=16*mm,
-                topMargin=15*mm,
-                bottomMargin=15*mm
+                rightMargin=16 * mm,
+                leftMargin=16 * mm,
+                topMargin=10 * mm,
+                bottomMargin=14 * mm,
             )
             story = []
             styles = getSampleStyleSheet()
-            # Logos (plus grands)
             logos = self._resolve_logo_sources()
-            logo_row = []
 
-            logo_height = 70   # hauteur max
-            logo_max_width = 90  # largeur max
+            base_style = ParagraphStyle(
+                'CertificateBase',
+                parent=styles['Normal'],
+                fontName='Times-Roman',
+                fontSize=9.9,
+                leading=13,
+            )
+            center_style = ParagraphStyle(
+                'CertificateCenter',
+                parent=base_style,
+                alignment=TA_CENTER,
+                leading=12,
+            )
+            title_style = ParagraphStyle(
+                'CertificateTitle',
+                parent=center_style,
+                fontName='Times-Bold',
+                fontSize=13.4,
+                leading=15,
+                spaceAfter=1,
+            )
+            title_sub_style = ParagraphStyle(
+                'CertificateTitleSub',
+                parent=center_style,
+                fontName='Times-Bold',
+                fontSize=11.1,
+                leading=13,
+            )
+            intro_style = ParagraphStyle(
+                'CertificateIntro',
+                parent=base_style,
+                fontName='Times-Bold',
+                fontSize=9.4,
+                leading=14,
+                alignment=TA_JUSTIFY,
+            )
+            label_style = ParagraphStyle(
+                'CertificateLabel',
+                parent=base_style,
+                fontName='Times-Bold',
+                fontSize=9.1,
+                leading=13,
+            )
+            value_style = ParagraphStyle(
+                'CertificateValue',
+                parent=base_style,
+                fontName='Times-Bold',
+                fontSize=9.1,
+                leading=13,
+            )
+            declaration_style = ParagraphStyle(
+                'CertificateDeclaration',
+                parent=base_style,
+                fontName='Times-Bold',
+                fontSize=9.4,
+                leading=14,
+            )
+            date_style = ParagraphStyle(
+                'CertificateDate',
+                parent=base_style,
+                fontName='Times-Bold',
+                fontSize=9.2,
+                leading=13,
+                alignment=TA_RIGHT,
+            )
+            director_style = ParagraphStyle(
+                'CertificateDirector',
+                parent=center_style,
+                fontName='Times-Bold',
+                fontSize=9.7,
+                leading=13,
+            )
+            note_style = ParagraphStyle(
+                'CertificateNote',
+                parent=base_style,
+                fontName='Times-Italic',
+                fontSize=8.7,
+                leading=12,
+            )
 
-            def get_logo(path_key):
+            logo_height = 52
+
+            def get_logo(path_key, max_width):
                 path = logos.get(path_key, "")
                 path = self._uri_to_local_path(path)
 
                 if path and Path(path).exists():
                     img = Image(path)
                     ratio = img.imageWidth / img.imageHeight
-
                     img.drawHeight = logo_height
                     img.drawWidth = logo_height * ratio
 
-                    if img.drawWidth > logo_max_width:
-                        img.drawWidth = logo_max_width
-                        img.drawHeight = logo_max_width / ratio
-
+                    if img.drawWidth > max_width:
+                        img.drawWidth = max_width
+                        img.drawHeight = max_width / ratio
                     return img
                 return Spacer(1, logo_height)
 
-            # Logos
-            left_logo = get_logo("left")
-            center_logo = get_logo("center")
-            right_logo = get_logo("right")
+            def build_header_table():
+                left_logo = get_logo("left", 34 * mm)
+                center_logo = get_logo("center", 30 * mm)
+                right_logo = get_logo("right", 34 * mm)
 
-            # 🔥 Bloc texte centré SOUS le logo du milieu
-            center_content = [
-                center_logo,
-                Spacer(1, 5),
-                Paragraph('<para align="center"><b>MINISTÈRE DE LA SANTÉ PUBLIQUE</b></para>', styles['Normal']),
-                Paragraph('<para align="center">--------------</para>', styles['Normal']),
-                Paragraph('<para align="center"><b>SECRÉTARIAT GÉNÉRAL</b></para>', styles['Normal']),
-                Paragraph('<para align="center">--------------</para>', styles['Normal']),
-                Spacer(1, 2),
-                Paragraph('<para align="center"><b>AGENCE DE CONTRÔLE DE LA SÉCURITÉ SANITAIRE<br/>ET DE LA QUALITÉ DES DENRÉES ALIMENTAIRES</b></para>', styles['Normal']),
-                Spacer(1, 2),
-            ]
+                center_content = [
+                    center_logo,
+                    Spacer(1, 2),
+                    Paragraph("<b>MINISTÈRE DE LA SANTÉ PUBLIQUE</b>", center_style),
+                    Paragraph("----------------", center_style),
+                    Paragraph("<b>SECRÉTARIAT GÉNÉRAL</b>", center_style),
+                    Paragraph("----------------", center_style),
+                    Paragraph(
+                        "<b>AGENCE DE CONTRÔLE DE LA SÉCURITÉ SANITAIRE<br/>ET DE LA QUALITÉ DES DENRÉES ALIMENTAIRES</b>",
+                        center_style,
+                    ),
+                ]
 
-           
-            # Tableau principal (3 colonnes)
-            table = Table(
-                [
-                  [left_logo, center_content, right_logo],
-                  [],
-                  [],
-                  []
-                ],
-                colWidths=[doc.width/2.8]*3
-            )
+                table = Table(
+                    [[left_logo, center_content, right_logo]],
+                    colWidths=[doc.width * 0.18, doc.width * 0.64, doc.width * 0.18],
+                )
 
-            table.setStyle(TableStyle([
+                table.setStyle(TableStyle([
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                    ('ALIGN', (0,0), (0,0), 'LEFT'),
+                    ('ALIGN', (1,0), (1,0), 'CENTER'),
+                    ('ALIGN', (2,0), (2,0), 'RIGHT'),
+                    ('LEFTPADDING', (0,0), (-1,-1), 0),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                    ('TOPPADDING', (0,0), (-1,-1), 0),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+                ]))
 
-                ('VALIGN', (0,0), (-1,-1), 'TOP'),
-                ('ALIGN', (0,0), (0,0), 'LEFT'),
-                ('ALIGN', (1,0), (1,0), 'CENTER'),
-                ('ALIGN', (2,0), (2,0), 'RIGHT'),
+                return table
 
-                ('LEFTPADDING', (0,0), (-1,-1), 0),
-                ('RIGHTPADDING', (0,0), (-1,-1), 0),
-                ('TOPPADDING', (0,0), (-1,-1), 0),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-            ]))
+            def build_value_table(product_name, cert_type, extras):
+                year_two_digits = date.today().strftime("%y")
+                num_prelevement = str(extras.get("num_prelevement", "") or "").strip()
+                date_pv = str(extras.get("date_pv", "") or "").strip()
+                proces_verbal = self._build_proces_verbal(num_prelevement, date_pv, year_two_digits)
+                reference = extras.get("reference") or f"N°/{year_two_digits}/{extras.get('num_acte', '')}"
+                quantity_value = (
+                    f"{escape(str(extras.get('quantite', '') or ''))}"
+                    f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"
+                    f"<b>Quantité Analysée</b> : {escape(str(extras.get('quantite_analysee', '') or ''))}"
+                )
+                rows = [
+                    [Paragraph("Echantillon", label_style), Paragraph(":", label_style), Paragraph(escape(str(product_name or "")), value_style)],
+                    [Paragraph("Classe", label_style), Paragraph(":", label_style), Paragraph(escape(str(extras.get('classe', '') or '')), value_style)],
+                    [Paragraph("Quantité", label_style), Paragraph(":", label_style), Paragraph(quantity_value, value_style)],
+                    [Paragraph("Date de production", label_style), Paragraph(":", label_style), Paragraph(escape(str(extras.get('date_production', '') or '')), value_style)],
+                    [Paragraph("Date de péremption", label_style), Paragraph(":", label_style), Paragraph(escape(str(extras.get('date_peremption', '') or '')), value_style)],
+                    [Paragraph("Lot", label_style), Paragraph(":", label_style), Paragraph(escape(str(extras.get('num_lot', '') or '')), value_style)],
+                    [Paragraph("Procès-verbal de prélèvement", label_style), Paragraph(":", label_style), Paragraph(escape(proces_verbal), value_style)],
+                    [Paragraph("Société / Etablissement", label_style), Paragraph(":", label_style), Paragraph(fd['company_name'], value_style)],
+                    [Paragraph("Analyse", label_style), Paragraph(":", label_style), Paragraph(escape(str(extras.get('analyse', '') or '')), value_style)],
+                    [Paragraph("Référence", label_style), Paragraph(":", label_style), Paragraph(escape(reference), value_style)],
+                ]
 
-            story.append(table)
-            story.append(Spacer(1, 10))
-            year_two_digits = date.today().strftime("%y")
-            header_number = f"N°/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
-            if extras.get("num_cert", ""):
-              header_number = f"N°{extras.get('num_cert')}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
+                table = Table(rows, colWidths=[54 * mm, 5 * mm, doc.width - (59 * mm)])
+                table.setStyle(TableStyle([
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                    ('ALIGN', (0,0), (1,-1), 'LEFT'),
+                    ('LEFTPADDING', (0,0), (-1,-1), 0),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                    ('TOPPADDING', (0,0), (-1,-1), 1),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                ]))
+                return table
 
-            proces_verbal = extras.get("proces_verbal", "")
-            if not proces_verbal:
-              num_prelevement = str(extras.get("num_prelevement", "") or "").strip()
-              date_pv = str(extras.get("date_pv", "") or "").strip()
-              if num_prelevement and date_pv:
-                proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
-              elif num_prelevement:
-                proces_verbal = f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
-              elif date_pv:
-                proces_verbal = date_pv
+            for index, entry in enumerate(assignments):
+                product_name, cert_type = entry[1], entry[2]
+                extras = entry[3] if len(entry) > 3 else {}
+                year_two_digits = date.today().strftime("%y")
+                num_cert = str(extras.get("num_cert", "") or "").strip()
+                header_number = f"N°{num_cert}/{year_two_digits}-" if num_cert else f"N°/{year_two_digits}-"
 
-            title_table = Table(
-                [
-                  [
-                    Paragraph('<para align="center"><font size=16><b><u>%s</u></b></font></para>' % _TITLES[cert_type], styles['Normal']),
-                  ],
-                  [
-                    Paragraph(f'<para align="center"><b>{header_number}</b></para>', styles['Normal']),
-                  ],
-                  [],
-                  [],
-                  []
-                ],
-                colWidths=[doc.width]
-            )
-            title_table.setStyle(TableStyle([
-                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ]))
+                story.append(build_header_table())
+                story.append(Spacer(1, 8))
+                story.append(Paragraph(f"<u>{_TITLES[cert_type]}</u>", title_style))
+                story.append(Paragraph(header_number, title_sub_style))
+                story.append(Paragraph(f"MSANP/SG/ACSSQDA/{cert_type}", title_sub_style))
+                story.append(Spacer(1, 8))
+                story.append(
+                    Paragraph(
+                        "Je, soussigné, le Directeur de l'Agence de Contrôle de la Sécurité Sanitaire et de la Qualité des Denrées Alimentaires (ACSSQDA), certifie que",
+                        intro_style,
+                    )
+                )
+                story.append(Spacer(1, 6))
+                story.append(build_value_table(product_name, cert_type, extras))
+                story.append(Spacer(1, 10))
 
-            story.append(title_table)
-            story.append(Paragraph("Je, soussigné, le Directeur de l'Agence de Contrôle de la Sécurité Sanitaire et de la Qualité des Denrées Alimentaires (ACSSQDA), certifie que", ParagraphStyle('main', fontSize=11, leading=14, spaceAfter=8)))
-            
-            # Tableau infos produit (sans bordure)
-            data = [
-                ["Echantillon", product_name, '', ''],
-                ["Classe", extras.get("classe", ""), '', ''],
-                ["Quantité", extras.get("quantite", ""), "Quantité Analysée", extras.get("quantite_analysee", "")],
-                ["Date de production", extras.get("date_production", ""), '', ''],
-                ["Date de péremption", extras.get("date_peremption", ""), '', ''],
-                ["Lot", extras.get("num_lot", ""), '', ''],
-                ["Procès-verbal de prélèvement", extras.get("proces_verbal", ""), '', ''],
-                ["Société / Etablissement", fd['company_name'], '', ''],
-                ["Analyse", extras.get("analyse", ""), '', ''],
-                ["Référence", extras.get("reference", f"N°/{year_two_digits}/{extras.get('num_acte','')}") , '', ''],
-            ]
-            table = Table(data, colWidths=[110, 120, 110, 120])
-            table.setStyle(TableStyle([
-                ('SPAN', (0,2), (1,2)),
-                ('SPAN', (2,2), (3,2)),
-                ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
-                ('FONTSIZE', (0,0), (-1,-1), 10),
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-                # Pas de bordure !
-                ('LINEBELOW', (0,0), (-1,-1), 0, colors.white),
-                ('LINEABOVE', (0,0), (-1,-1), 0, colors.white),
-                ('LINEBEFORE', (0,0), (-1,-1), 0, colors.white),
-                ('LINEAFTER', (0,0), (-1,-1), 0, colors.white),
-                ('LEFTPADDING', (0,0), (-1,-1), 2),
-                ('RIGHTPADDING', (0,0), (-1,-1), 2),
-                ('TOPPADDING', (0,0), (-1,-1), 2),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 2),
-            ]))
-            story.append(table)
-            story.append(Spacer(1, 10))
-            # Résultat
-            result_text = "consommable" if cert_type == "CC" else "non consommable"
-            story.append(Paragraph(f"<b>Est déclaré {result_text} à la consommation humaine</b>", ParagraphStyle('res', fontSize=11, leading=14, spaceAfter=8)))
-            story.append(Paragraph("En foi de quoi, ce certificat est délivré pour servir et valoir ce que de droit.", ParagraphStyle('main2', fontSize=10, leading=13, spaceAfter=8)))
-            # Signature
-            story.append(Paragraph(f"<para align='right'>Fait à Antananarivo, le {fd['date']}</para>", styles['Normal']))
-            story.append(Spacer(1, 8))
-            story.append(Paragraph("<para align='right'><b>Le Directeur,</b></para>", styles['Normal']))
-            story.append(Spacer(1, 36))
-            # Note de bas de page
-            story.append(Paragraph("<i>*Ce certificat est valable uniquement pour le LOT ayant fait l'objet d'analyse mentionnée ci-dessus</i>", ParagraphStyle('footer', fontSize=9, leading=11)))
+                result_text = "consommable" if cert_type == "CC" else "non consommable"
+                story.append(Paragraph(f"Est déclaré {result_text} à la consommation humaine", declaration_style))
+                story.append(Spacer(1, 7))
+                story.append(Paragraph("En foi de quoi, ce certificat est délivré pour servir et valoir ce que de droit.", declaration_style))
+                story.append(Spacer(1, 12))
+                story.append(Paragraph(f"Fait à Antananarivo, le {fd['date']}", date_style))
+                story.append(Spacer(1, 12))
+                signature_table = Table(
+                    [["", Paragraph("Le Directeur,", director_style)]],
+                    colWidths=[doc.width * 0.58, doc.width * 0.42],
+                )
+                signature_table.setStyle(TableStyle([
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                    ('ALIGN', (1,0), (1,0), 'CENTER'),
+                    ('LEFTPADDING', (0,0), (-1,-1), 0),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                    ('TOPPADDING', (0,0), (-1,-1), 0),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+                ]))
+                story.append(signature_table)
+                story.append(Spacer(1, 38))
+                story.append(Paragraph("*Ce certificat est valable uniquement pour le LOT ayant fait l'objet d'analyse mentionnée ci-dessus", note_style))
+
+                if index < len(assignments) - 1:
+                    story.append(PageBreak())
+
             doc.build(story)
         except Exception:
             raise

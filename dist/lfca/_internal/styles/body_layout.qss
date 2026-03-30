@@ -1,0 +1,81 @@
+#netAPayerLabel {
+    font-size: 14px;
+    font-weight: bold;
+    color: #000000;
+    background-color: #FFFFCC;
+    padding: 4px;
+    border: 1px solid #999999;
+    border-radius: 4px;
+}
+
+QPushButton#saveButton {
+    background-color: #2F5A8F;
+    color: white;
+    padding: 10px;
+    border: none;
+    border-radius: 5px;
+}
+
+QPushButton#saveButton:hover {
+    background-color: #1E3F61;
+}
+
+QPushButton#printButton {
+    background-color: #2F5A8F;
+    color: white;
+    padding: 10px;
+    border: none;
+    border-radius: 5px;
+}
+
+QPushButton#printButton:hover {
+    background-color: #1E3F61;
+}
+
+QPushButton#previewButton {
+    background-color: #2F5A8F;
+    color: white;
+    padding: 10px;
+    border: none;
+    border-radius: 5px;
+}
+
+QPushButton#previewButton:hover {
+    background-color: #1E3F61;
+}
+
+QPushButton#convertButton {
+    background-color: #2F5A8F;
+    color: white;
+    padding: 10px;
+    border: none;
+    border-radius: 5px;
+}
+
+QPushButton#convertButton:hover {
+    background-color: #1E3F61;
+}
+
+QPushButton#certificateButton {
+    background-color: #2F5A8F;
+    color: white;
+    padding: 10px;
+    border: none;
+    border-radius: 5px;
+}
+
+QPushButton#certificateButton:hover {
+    background-color: #1E3F61;
+}
+
+QPushButton#certificatePrintButton {
+    background-color: #2F5A8F;
+    color: white;
+    padding: 6px 18px;
+    border: none;
+    border-radius: 4px;
+}
+
+QPushButton#certificatePrintButton:hover {
+    background-color: #1E3F61;
+}

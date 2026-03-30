@@ -14,19 +14,57 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 from PySide6.QtWidgets import QMessageBox
 
 from utils.text_utils import TextUtils
+from utils.path_utils import resolve_resource_path
 
 
 class InvoicePrinter:
     def __init__(self, parent_widget):
         self.parent = parent_widget
 
+    @staticmethod
+    def _draw_footer(canvas, doc):
+        canvas.saveState()
+        footer_y = 20
+        canvas.setFont("Times-Italic", 8)
+        canvas.drawString(
+            doc.leftMargin,
+            footer_y,
+            "(*) Chèque vise à l'ordre de Madame le RECEVEUR GENERAL .",
+        )
+        canvas.setFont("Times-Roman", 9)
+        canvas.drawRightString(A4[0] - doc.rightMargin, footer_y, "Quittance N°")
+        canvas.restoreState()
+
+    @staticmethod
+    def _build_payment_mode_table(styles):
+        payment_table = Table(
+            [[
+                Paragraph("<b>Mode de paiement</b>", styles['Normal']),
+                "",
+                Paragraph("Espèce", styles['Normal']),
+                "",
+                Paragraph("Chèque", styles['Normal']),
+            ]],
+            colWidths=[105, 12, 55, 12, 55],
+        )
+        payment_table.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('LEFTPADDING', (0,0), (-1,-1), 0),
+            ('RIGHTPADDING', (0,0), (-1,-1), 6),
+            ('TOPPADDING', (0,0), (-1,-1), 0),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+            ('BOX', (1,0), (1,0), 1, colors.black),
+            ('BOX', (3,0), (3,0), 1, colors.black),
+        ]))
+        return payment_table
+
     def _resolve_logo_src(self):
-        logo_path = Path(__file__).resolve().parent.parent / "images" / "image.png"
+        logo_path = resolve_resource_path("images/image.png")
         return str(logo_path) if logo_path.exists() else ""
 
     def _load_print_css(self):
         try:
-            with open("styles/invoice_print.css", "r", encoding="utf-8") as css_file:
+            with open(resolve_resource_path("styles/invoice_print.css"), "r", encoding="utf-8") as css_file:
                 return css_file.read()
         except FileNotFoundError:
             return ""
@@ -184,6 +222,8 @@ class InvoicePrinter:
         elements.append(Spacer(1, 10))
         
         # PRODUCTS TABLE
+        page_width = A4[0] - 60  # (30 marge gauche + 30 droite)
+
         if invoice_type == 'standard':
             header_row = ['Réf. Bulletin', 'Désignations', 'N°Acte', 'Physico', 'Micro', 'Toxico', 'Sous-total']
             data_rows = [header_row]
@@ -198,6 +238,16 @@ class InvoicePrinter:
                     str(prod.get('subtotal', '') or ''),
                 ])
             data_rows.append(['', '', '', '', '', 'Montant à payer', total_formatted + ' Ar'])
+            col_widths = [
+                page_width * 0.12,
+                page_width * 0.22,
+                page_width * 0.12,
+                page_width * 0.11,
+                page_width * 0.11,
+                page_width * 0.11,
+                page_width * 0.21,
+            ]
+            total_span_end = -3
         else:
             header_row = ['Désignations', 'Physico', 'Micro', 'Toxico', 'Sous-total']
             data_rows = [header_row]
@@ -209,21 +259,19 @@ class InvoicePrinter:
                     str(prod.get('toxico', '') or ''),
                     str(prod.get('subtotal', '') or ''),
                 ])
-            data_rows.append(['', '', '', '', 'Montant à payer', total_formatted + ' Ar'])
+            data_rows.append(['', '', '', 'Montant à payer', total_formatted + ' Ar'])
+            col_widths = [
+                page_width * 0.32,
+                page_width * 0.16,
+                page_width * 0.16,
+                page_width * 0.16,
+                page_width * 0.20,
+            ]
+            total_span_end = -2
         
-        page_width = A4[0] - 60  # (30 marge gauche + 30 droite)
-
         products_table = Table(
             data_rows,
-            colWidths=[
-                page_width * 0.12,  # Réf
-                page_width * 0.22,  # Désignations (plus large)
-                page_width * 0.12,  # N°Acte
-                page_width * 0.11,  # Physico
-                page_width * 0.11,  # Micro
-                page_width * 0.11,  # Toxico
-                page_width * 0.21,  # Sous-total (plus large)
-            ]
+            colWidths=col_widths
         )
         
         products_table.setStyle(TableStyle([
@@ -240,7 +288,7 @@ class InvoicePrinter:
 
             ('BACKGROUND', (0,-1), (-1,-1), colors.beige),
 
-            ('SPAN', (0,-1), (-3,-1)),
+            ('SPAN', (0,-1), (total_span_end,-1)),
             ('ALIGN', (-2,-1), (-2,-1), 'RIGHT'),
             ('FONTNAME', (-1,-1), (-1,-1), 'Helvetica-Bold'),
             ('ALIGN', (-1,-1), (-1,-1), 'RIGHT'),
@@ -255,6 +303,8 @@ class InvoicePrinter:
         footer_para = Paragraph(f"<b>{footer_text}</b>", styles['Normal'])
         elements.append(footer_para)
         elements.append(Spacer(1, 10))
+        elements.append(self._build_payment_mode_table(styles))
+        elements.append(Spacer(1, 28))
         
         # Signature lines
         sig_table = Table([
@@ -287,9 +337,9 @@ class InvoicePrinter:
                 leftMargin=30,
                 rightMargin=30,
                 topMargin=30,
-                bottomMargin=30
+                bottomMargin=52
             )
-            doc.build(elements)
+            doc.build(elements, onFirstPage=self._draw_footer, onLaterPages=self._draw_footer)
             return True
         except Exception as e:
             QMessageBox.critical(self.parent, 'Erreur', f'Erreur lors de la génération du PDF: {str(e)}')

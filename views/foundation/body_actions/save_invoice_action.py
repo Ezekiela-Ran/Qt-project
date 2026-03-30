@@ -48,7 +48,7 @@ class SaveInvoiceAction:
 
         form = main_layout.head_layout.form
         company_name = form.company_name_input.text().strip()
-        responsable = form.responsable_input.text().strip()
+        responsable = GlobalVariable.current_username()
         stat = form.stat_input.text()
         nif = form.nif_input.text()
 
@@ -56,7 +56,10 @@ class SaveInvoiceAction:
         if not company_name:
             errors.append("Raison sociale est obligatoire")
         if not responsable:
-            errors.append("Responsable est obligatoire")
+            errors.append("Aucun utilisateur connecté")
+
+        if hasattr(form, "set_responsable_username"):
+            form.set_responsable_username(responsable)
 
         selected_products = [
             pid for pid, selected in body_layout.product_manager.selected_products.items() if selected

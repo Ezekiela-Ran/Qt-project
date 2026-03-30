@@ -1,4 +1,5 @@
 from PySide6.QtCore import QDate
+from views.foundation.globals import GlobalVariable
 
 
 class ClearFormAndSelectionAction:
@@ -8,7 +9,7 @@ class ClearFormAndSelectionAction:
         if hasattr(main_layout, "head_layout") and hasattr(main_layout.head_layout, "form"):
             form = main_layout.head_layout.form
             form.company_name_input.clear()
-            form.responsable_input.clear()
+            form.responsable_input.setText(GlobalVariable.current_username())
             form.stat_input.clear()
             form.nif_input.clear()
             form.address_input.clear()
