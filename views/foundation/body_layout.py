@@ -113,6 +113,12 @@ class BodyLayout(QtWidgets.QWidget):
         PreviewInvoiceAction.execute(self)
 
     def cleanup(self):
+        product_manager_cleanup = getattr(self.product_manager, "cleanup", None)
+        if callable(product_manager_cleanup):
+            try:
+                product_manager_cleanup()
+            except Exception:
+                pass
         for service_name in ("invoice_service", "product_service", "db_manager"):
             service = getattr(self, service_name, None)
             close = getattr(service, "close", None)

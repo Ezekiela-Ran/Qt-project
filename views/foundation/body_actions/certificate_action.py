@@ -6,6 +6,8 @@ puis ouvre le dialogue de sélection CC / CNC.
 """
 from PySide6.QtWidgets import QMessageBox
 
+from views.foundation.globals import GlobalVariable
+
 
 class CertificateAction:
     @staticmethod
@@ -50,6 +52,8 @@ class CertificateAction:
             form,
             selected_products,
             body_layout.db_manager,
+            invoice_id=body_layout.current_invoice_id,
+            invoice_type=GlobalVariable.invoice_type,
             product_manager=body_layout.product_manager,
         )
         dlg.exec()

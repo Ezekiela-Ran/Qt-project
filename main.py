@@ -4,10 +4,10 @@ import tempfile
 import traceback
 from pathlib import Path
 
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtWidgets import QMessageBox
 
-from models.database.db_config import database_config_requires_setup
+from models.database.db_config import database_config_requires_setup, get_database_settings
 from models.database_manager import DatabaseManager
 from services.auth_service import AuthService
 from views.auth import DatabaseConfigDialog
@@ -52,16 +52,71 @@ def authenticate_startup_user(parent=None):
     try:
         if not auth_service.has_admin():
             dialog = SetupAdminDialog(auth_service, parent)
-            if dialog.exec() != QtWidgets.QDialog.Accepted or not dialog.created_user:
+            if exec_startup_dialog(dialog) != QtWidgets.QDialog.Accepted or not dialog.created_user:
                 return None
             return dialog.created_user
 
         dialog = LoginDialog(auth_service, parent)
-        if dialog.exec() != QtWidgets.QDialog.Accepted or not dialog.authenticated_user:
+        if exec_startup_dialog(dialog) != QtWidgets.QDialog.Accepted or not dialog.authenticated_user:
             return None
         return dialog.authenticated_user
     finally:
         auth_service.close()
+
+
+def exec_startup_dialog(dialog: QtWidgets.QDialog) -> int:
+    dialog.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+    dialog.show()
+    dialog.raise_()
+    dialog.activateWindow()
+    return dialog.exec()
+
+
+class StartupSplash:
+    def __init__(self, app):
+        self.app = app
+        self._closed = False
+        image_path = resolve_resource_path("images/image.png")
+        pixmap = QtGui.QPixmap(str(image_path)) if image_path.exists() else QtGui.QPixmap()
+        if pixmap.isNull():
+            self.splash = None
+            return
+
+        self.splash = QtWidgets.QSplashScreen(
+            pixmap,
+            QtCore.Qt.WindowType.WindowStaysOnTopHint | QtCore.Qt.WindowType.FramelessWindowHint,
+        )
+        self.splash.setMask(pixmap.mask())
+
+    def show(self, message=""):
+        if self.splash is None:
+            return
+        self._closed = False
+        self.splash.show()
+        self.show_message(message)
+        QtCore.QTimer.singleShot(2000, self.close)
+
+    def show_message(self, message=""):
+        if self.splash is None:
+            return
+        self.splash.showMessage(
+            message,
+            QtCore.Qt.AlignmentFlag.AlignBottom | QtCore.Qt.AlignmentFlag.AlignHCenter,
+            QtGui.QColor("white"),
+        )
+        self.app.processEvents()
+
+    def finish(self, window):
+        if self.splash is None or self._closed:
+            return
+        self.splash.finish(window)
+        self._closed = True
+
+    def close(self):
+        if self.splash is None or self._closed:
+            return
+        self.splash.close()
+        self._closed = True
 
 
 class ApplicationController:
@@ -69,15 +124,30 @@ class ApplicationController:
         self.app = app
         self.window = Window()
         self.main_layout = None
+        self.splash = StartupSplash(app)
 
     def start(self) -> int:
-        if not self._ensure_database_configuration():
-            return 0
-        DatabaseManager.create_tables()
-        if not self._authenticate_and_show_main_view():
-            return 0
-        self.window.show()
-        return self.app.exec()
+        self.splash.show("Chargement de l'application...")
+        try:
+            self.splash.show_message("Chargement de la configuration...")
+            if not self._ensure_database_configuration():
+                self.splash.close()
+                return 0
+
+            self.splash.show_message("Initialisation de la base de données...")
+            self._initialize_database()
+
+            self.splash.show_message("Authentification...")
+            if not self._authenticate_and_show_main_view():
+                self.splash.close()
+                return 0
+
+            self.window.show()
+            self.splash.finish(self.window)
+            return self.app.exec()
+        except Exception:
+            self.splash.close()
+            raise
 
     def handle_logout(self):
         GlobalVariable.clear_current_user()
@@ -86,7 +156,7 @@ class ApplicationController:
             self.app.quit()
 
     def _authenticate_and_show_main_view(self) -> bool:
-        user = authenticate_startup_user(self.window)
+        user = authenticate_startup_user()
         if not user:
             return False
 
@@ -115,12 +185,28 @@ class ApplicationController:
         if not database_config_requires_setup():
             return True
 
-        dialog = DatabaseConfigDialog(self.window, first_run=True)
-        return dialog.exec() == QtWidgets.QDialog.Accepted
+        dialog = DatabaseConfigDialog(first_run=True)
+        return exec_startup_dialog(dialog) == QtWidgets.QDialog.Accepted
+
+    def _initialize_database(self):
+        try:
+            DatabaseManager.create_tables()
+        except Exception as exc:
+            settings = get_database_settings()
+            if settings['engine'] == 'mysql':
+                host = settings['mysql']['host']
+                port = settings['mysql']['port']
+                database_name = settings['mysql']['database']
+                raise RuntimeError(
+                    "Le demarrage a echoue pendant la connexion MySQL vers "
+                    f"{host}:{port} (base {database_name}). Verifiez que le serveur est accessible, "
+                    "puis relancez l'application."
+                ) from exc
+            raise
 
 
 def log_startup_error(exc: Exception) -> Path:
-    log_path = Path(tempfile.gettempdir()) / "lfca-startup.log"
+    log_path = Path(tempfile.gettempdir()) / "fac-startup.log"
     details = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     log_path.write_text(details, encoding="utf-8")
     return log_path
@@ -136,7 +222,7 @@ def show_startup_error(exc: Exception):
 
     QMessageBox.critical(
         None,
-        "LFCA - Startup error",
+        "FaC - Erreur de demarrage",
         "L'application n'a pas pu démarrer.\n\n"
         f"Erreur: {exc}\n\n"
         f"Détails enregistrés dans: {log_path}"

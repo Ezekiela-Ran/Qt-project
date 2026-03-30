@@ -13,7 +13,7 @@ def resolve_resource_path(relative_path: str) -> Path:
     return get_project_base_path() / relative_path
 
 
-def get_app_data_dir(app_name: str = "LFCA") -> Path:
+def get_app_data_dir(app_name: str = "FaC") -> Path:
     local_app_data = os.getenv("LOCALAPPDATA")
     if local_app_data:
         return Path(local_app_data) / app_name

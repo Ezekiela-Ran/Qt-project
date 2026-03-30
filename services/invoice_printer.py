@@ -59,7 +59,7 @@ class InvoicePrinter:
         except FileNotFoundError:
             return ""
 
-    def generate_invoice_html(self, form, invoice_type, selected_products, db_manager, ref_mapping=None, num_act_mapping=None):
+    def generate_invoice_html(self, form, invoice_type, selected_products, db_manager, invoice_id=None, ref_mapping=None, num_act_mapping=None):
         """Extrait les données et les stocke pour la génération PDF reportlab"""
         # Stocker les données pour utilisation ultérieure dans generate_pdf_from_html
         self._invoice_data = {
@@ -67,6 +67,7 @@ class InvoicePrinter:
             'invoice_type': invoice_type,
             'selected_products': selected_products,
             'db_manager': db_manager,
+            'invoice_id': invoice_id,
             'ref_mapping': ref_mapping,
             'num_act_mapping': num_act_mapping
         }
@@ -83,6 +84,7 @@ class InvoicePrinter:
         invoice_type = data['invoice_type']
         selected_products = data['selected_products']
         db_manager = data['db_manager']
+        invoice_id = data.get('invoice_id')
         ref_mapping = data.get('ref_mapping')
         num_act_mapping = data.get('num_act_mapping') or {}
         
@@ -97,7 +99,7 @@ class InvoicePrinter:
             date_issue = form.date_issue_input.date().toString('dd/MM/yyyy') if hasattr(form, 'date_issue_input') else ''
             date_result = form.date_result_input.date().toString('dd/MM/yyyy') if hasattr(form, 'date_result_input') else ''
             product_ref_raw = form.product_ref_input.text() if hasattr(form, 'product_ref_input') else ''
-            title = 'FACTURE'
+            title = f'FACTURE N°{invoice_id}' if invoice_id else 'FACTURE'
         else:
             date_issue = form.date_input.date().toString('dd/MM/yyyy') if hasattr(form, 'date_input') else ''
             date_result = ''

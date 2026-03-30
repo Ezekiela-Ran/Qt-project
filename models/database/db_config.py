@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import socket
 from pathlib import Path
 
@@ -14,11 +15,18 @@ from models.database.sqlite_backend import connect as connect_sqlite
 
 
 DEFAULT_DB_NAME = 'invoicing'
-DEFAULT_DB_ENGINE = 'mysql'
+DEFAULT_DB_ENGINE = 'sqlite'
 DEFAULT_DB_HOST = '127.0.0.1'
 DEFAULT_DB_PORT = 3306
 DEFAULT_DB_USER = 'lfca_app'
 DEFAULT_DB_PASSWORD = 'lfca_app'
+APP_DATA_DIR_NAME = 'FaC'
+LEGACY_APP_DATA_DIR_NAME = 'LFCA'
+APP_DB_CONFIG_ENV = 'FAC_DB_CONFIG'
+LEGACY_APP_DB_CONFIG_ENV = 'LFCA_DB_CONFIG'
+DEFAULT_SQLITE_FILENAME = 'fac.db'
+LEGACY_SQLITE_FILENAME = 'lfca.db'
+MYSQL_CONNECT_TIMEOUT_SECONDS = 5
 
 
 def build_default_database_config() -> dict:
@@ -26,7 +34,7 @@ def build_default_database_config() -> dict:
         'engine': DEFAULT_DB_ENGINE,
         'sqlite_path': _default_sqlite_path(),
         'deployment_role': 'client',
-        'setup_completed': False,
+        'setup_completed': True,
         'server_host_hint': '',
         'mysql': {
             'host': DEFAULT_DB_HOST,
@@ -38,18 +46,66 @@ def build_default_database_config() -> dict:
     }
 
 
+def _primary_config_path() -> Path:
+    return get_app_data_dir(APP_DATA_DIR_NAME) / 'database.json'
+
+
+def _legacy_config_path() -> Path:
+    return get_app_data_dir(LEGACY_APP_DATA_DIR_NAME) / 'database.json'
+
+
+def _default_sqlite_path_obj() -> Path:
+    return get_app_data_dir(APP_DATA_DIR_NAME) / DEFAULT_SQLITE_FILENAME
+
+
+def _legacy_sqlite_path_obj() -> Path:
+    return get_app_data_dir(LEGACY_APP_DATA_DIR_NAME) / LEGACY_SQLITE_FILENAME
+
+
+def _migrate_legacy_sqlite_database(target_path: Path):
+    legacy_path = _legacy_sqlite_path_obj()
+    if target_path.exists() or not legacy_path.exists():
+        return
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(legacy_path, target_path)
+
+
 def _config_file_candidates() -> list[Path]:
-    custom_path = os.getenv('LFCA_DB_CONFIG', '').strip()
     candidates = []
-    if custom_path:
-        candidates.append(Path(os.path.expandvars(custom_path)).expanduser())
-    candidates.append(get_app_data_dir('LFCA') / 'database.json')
+    for env_key in (APP_DB_CONFIG_ENV, LEGACY_APP_DB_CONFIG_ENV):
+        custom_path = os.getenv(env_key, '').strip()
+        if custom_path:
+            candidates.append(Path(os.path.expandvars(custom_path)).expanduser())
+    candidates.append(_primary_config_path())
+    candidates.append(_legacy_config_path())
     candidates.append(Path.cwd() / 'database.json')
     return candidates
 
 
 def _default_sqlite_path() -> str:
-    return str(get_app_data_dir('LFCA') / 'lfca.db')
+    target_path = _default_sqlite_path_obj()
+    _migrate_legacy_sqlite_database(target_path)
+    return str(target_path)
+
+
+def _normalize_sqlite_path(value: str) -> str:
+    raw_path = os.path.expandvars(str(value or '')).strip()
+    target_path = _default_sqlite_path_obj()
+    legacy_path = _legacy_sqlite_path_obj()
+
+    if not raw_path:
+        _migrate_legacy_sqlite_database(target_path)
+        return str(target_path)
+
+    normalized_path = Path(raw_path).expanduser()
+    if normalized_path == legacy_path:
+        _migrate_legacy_sqlite_database(target_path)
+        return str(target_path)
+
+    if normalized_path == target_path:
+        _migrate_legacy_sqlite_database(target_path)
+
+    return str(normalized_path)
 
 
 def _write_default_config_template(config_path: Path):
@@ -85,7 +141,7 @@ def normalize_database_config(raw_config: dict | None) -> dict:
 
     return {
         'engine': _normalize_engine(raw_config.get('engine')),
-        'sqlite_path': _expand_path(raw_config.get('sqlite_path') or defaults['sqlite_path']),
+        'sqlite_path': _normalize_sqlite_path(raw_config.get('sqlite_path') or defaults['sqlite_path']),
         'deployment_role': str(raw_config.get('deployment_role') or defaults.get('deployment_role') or 'client').strip().lower() or 'client',
         'setup_completed': inferred_setup_completed,
         'server_host_hint': str(raw_config.get('server_host_hint') or defaults.get('server_host_hint') or '').strip(),
@@ -101,7 +157,20 @@ def normalize_database_config(raw_config: dict | None) -> dict:
 
 def _load_file_config() -> tuple[dict, Path]:
     candidates = _config_file_candidates()
-    primary_path = get_app_data_dir('LFCA') / 'database.json'
+    primary_path = _primary_config_path()
+
+    if not primary_path.exists():
+        legacy_path = _legacy_config_path()
+        if legacy_path.exists():
+            try:
+                loaded = json.loads(legacy_path.read_text(encoding='utf-8'))
+            except (json.JSONDecodeError, OSError):
+                loaded = None
+            if isinstance(loaded, dict):
+                normalized = normalize_database_config(loaded)
+                save_database_config(normalized, primary_path)
+                return normalized, primary_path
+
     _write_default_config_template(primary_path)
 
     for candidate in candidates:
@@ -112,7 +181,11 @@ def _load_file_config() -> tuple[dict, Path]:
         except (json.JSONDecodeError, OSError):
             continue
         if isinstance(loaded, dict):
-            return normalize_database_config(loaded), candidate
+            normalized = normalize_database_config(loaded)
+            if candidate != primary_path and not primary_path.exists():
+                save_database_config(normalized, primary_path)
+                return normalized, primary_path
+            return normalized, candidate
     return build_default_database_config(), primary_path
 
 
@@ -147,7 +220,7 @@ def get_database_settings() -> dict:
     mysql_file_config = file_config['mysql']
     engine = _normalize_engine(_pick_setting('DB_ENGINE', file_config.get('engine'), DEFAULT_DB_ENGINE))
     database_name = str(_pick_setting('DB_NAME', mysql_file_config.get('database'), DEFAULT_DB_NAME)).strip() or DEFAULT_DB_NAME
-    sqlite_path = _expand_path(_pick_setting('DB_PATH', file_config.get('sqlite_path'), _default_sqlite_path()))
+    sqlite_path = _normalize_sqlite_path(_pick_setting('DB_PATH', file_config.get('sqlite_path'), _default_sqlite_path()))
 
     settings = {
         'engine': engine,
@@ -179,6 +252,9 @@ def database_config_requires_setup() -> bool:
 
     config_file = Path(settings['config_file'])
     if not config_file.exists():
+        return True
+
+    if settings['engine'] == 'sqlite':
         return True
 
     if settings['engine'] != 'mysql':
@@ -284,6 +360,7 @@ def bootstrap_mysql_server(admin_user: str, admin_password: str, database: str =
         port=int(port),
         user=normalized_admin_user,
         password=str(admin_password or ''),
+        connection_timeout=MYSQL_CONNECT_TIMEOUT_SECONDS,
     )
     cursor = conn.cursor()
     try:
@@ -306,7 +383,7 @@ def bootstrap_mysql_server(admin_user: str, admin_password: str, database: str =
 
 def save_database_config(config: dict, config_path: Path | None = None) -> Path:
     normalized = normalize_database_config(config)
-    target_path = Path(config_path) if config_path else get_app_data_dir('LFCA') / 'database.json'
+    target_path = Path(config_path) if config_path else _primary_config_path()
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(json.dumps(normalized, indent=2), encoding='utf-8')
     return target_path
@@ -329,6 +406,7 @@ def test_database_connection(config: dict | None = None):
         port=normalized['mysql']['port'],
         user=normalized['mysql']['user'],
         password=normalized['mysql']['password'],
+        connection_timeout=MYSQL_CONNECT_TIMEOUT_SECONDS,
     )
     cursor = conn.cursor()
     try:

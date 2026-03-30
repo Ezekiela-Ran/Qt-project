@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from pathlib import Path
 
-from models.database.db_config import get_database_settings
+from models.database.db_config import MYSQL_CONNECT_TIMEOUT_SECONDS, get_database_settings
 from models.database.sqlite_backend import connect as connect_sqlite
 
 try:
@@ -18,20 +18,37 @@ class Tables:
         if self.backend == "mysql":
             if mysql is None:
                 raise RuntimeError("mysql-connector-python n'est pas disponible.")
-            self.conn = mysql.connector.connect(
-                host=self.settings['mysql']['host'],
-                port=self.settings['mysql']['port'],
-                user=self.settings['mysql']['user'],
-                password=self.settings['mysql']['password'],
-            )
-            self.conn.autocommit = False
+            try:
+                self.conn = mysql.connector.connect(
+                    host=self.settings['mysql']['host'],
+                    port=self.settings['mysql']['port'],
+                    user=self.settings['mysql']['user'],
+                    password=self.settings['mysql']['password'],
+                    connection_timeout=MYSQL_CONNECT_TIMEOUT_SECONDS,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "Connexion MySQL impossible vers "
+                    f"{self.settings['mysql']['host']}:{self.settings['mysql']['port']} "
+                    f"pour la base {self.database_name}. Verifiez que le serveur MySQL est demarre "
+                    "et que l'adresse configuree est correcte."
+                ) from exc
+            self.conn.autocommit = True
         else:
             self.conn = connect_sqlite(Path(self.settings['sqlite_path']))
         self.cursor = self.conn.cursor(dictionary=True)
         if self.is_mysql:
-            self.cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{self.database_name}`")
-            self.cursor.execute(f"USE `{self.database_name}`")
-            self.cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            try:
+                self.cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{self.database_name}`")
+                self.cursor.execute(f"USE `{self.database_name}`")
+                self.cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            except Exception as exc:
+                self.cursor.close()
+                self.conn.close()
+                raise RuntimeError(
+                    f"Initialisation MySQL impossible pour la base {self.database_name}. "
+                    "Verifiez les droits du compte MySQL et l'etat du serveur."
+                ) from exc
 
     @property
     def is_mysql(self) -> bool:
@@ -252,6 +269,63 @@ class Tables:
             FOREIGN KEY (product_id) REFERENCES products(id)
         )
         """)
+
+    def certificate_entry_table(self):
+        if self.is_mysql:
+            self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS certificate_entry (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                invoice_id INT NOT NULL,
+                invoice_type ENUM('standard', 'proforma') NOT NULL,
+                product_id INT NOT NULL,
+                certificate_type ENUM('CC', 'CNC') NOT NULL,
+                quantity VARCHAR(255),
+                quantity_analysee VARCHAR(255),
+                num_lot VARCHAR(255),
+                num_act VARCHAR(255),
+                num_cert VARCHAR(255),
+                classe VARCHAR(255),
+                date_production VARCHAR(32),
+                date_production_modified TINYINT(1) NULL,
+                date_peremption VARCHAR(32),
+                date_peremption_modified TINYINT(1) NULL,
+                num_prl VARCHAR(255),
+                date_commerce VARCHAR(32),
+                date_commerce_modified TINYINT(1) NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uk_certificate_entry_scope (invoice_id, invoice_type, product_id, certificate_type),
+                FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+            )
+            """)
+            return
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS certificate_entry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            invoice_id INTEGER NOT NULL,
+            invoice_type TEXT NOT NULL CHECK (invoice_type IN ('standard', 'proforma')),
+            product_id INTEGER NOT NULL,
+            certificate_type TEXT NOT NULL CHECK (certificate_type IN ('CC', 'CNC')),
+            quantity TEXT,
+            quantity_analysee TEXT,
+            num_lot TEXT,
+            num_act TEXT,
+            num_cert TEXT,
+            classe TEXT,
+            date_production TEXT,
+            date_production_modified INTEGER,
+            date_peremption TEXT,
+            date_peremption_modified INTEGER,
+            num_prl TEXT,
+            date_commerce TEXT,
+            date_commerce_modified INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+        )
+        """)
+        self.cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uk_certificate_entry_scope ON certificate_entry(invoice_id, invoice_type, product_id, certificate_type)"
+        )
 
     def app_settings_table(self):
         if self.is_mysql:

@@ -43,6 +43,7 @@ class PreviewInvoiceAction:
             GlobalVariable.invoice_type,
             ordered_selected,
             body_layout.db_manager,
+            invoice_id=body_layout.current_invoice_id,
             ref_mapping=ref_mapping,
             num_act_mapping=num_act_mapping,
         )

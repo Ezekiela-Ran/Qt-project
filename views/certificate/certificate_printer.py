@@ -103,14 +103,34 @@ class CertificatePrinter:
         }
 
     @staticmethod
-    def _build_proces_verbal(num_prelevement: str, date_pv: str, year_two_digits: str) -> str:
-        if num_prelevement and date_pv:
-            return f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL du {date_pv}"
-        if num_prelevement:
-            return f"N°{num_prelevement}/{year_two_digits}/MIC/SG/DGC/DPC/PRL"
-        if date_pv:
-            return date_pv
-        return ""
+    def _build_proces_verbal(num_acte: str, num_prl: str, date_commerce: str, year_two_digits: str) -> str:
+        reference = ""
+        if num_acte:
+            reference = f"N°{num_acte}-{year_two_digits}/MIC/SG/DGC/DPC/PRL"
+        elif year_two_digits:
+            reference = f"N°-{year_two_digits}/MIC/SG/DGC/DPC/PRL"
+
+        if num_prl:
+            reference = f"{reference} {num_prl}".strip()
+        if date_commerce:
+            return f"{reference} du {date_commerce}".strip()
+        return reference.strip()
+
+    @staticmethod
+    def _build_reference(ref_b_analyse: str, date_issue: str, invoice_number: str, year_two_digits: str) -> str:
+        parts = []
+        if ref_b_analyse or year_two_digits:
+            parts.append(f"N°{ref_b_analyse}/{year_two_digits}" if ref_b_analyse else f"N°/{year_two_digits}")
+        if date_issue:
+            parts.append(f"du {date_issue}")
+        if invoice_number:
+            parts.append(f"Facture N°{invoice_number}/{year_two_digits}/ACSSQDA")
+        return " ".join(part for part in parts if part).strip()
+
+    @staticmethod
+    def _display_date(value: str) -> str:
+        text = str(value or "").strip()
+        return text or "-"
 
     # ------------------------------------------------------------------
     # Génération HTML
@@ -151,12 +171,14 @@ class CertificatePrinter:
         num_acte          = escape(extras.get("num_acte", ""))
         analyse_raw       = extras.get("analyse", "")
         classe            = escape(extras.get("classe", ""))
-        date_production   = escape(extras.get("date_production", ""))
-        date_peremption   = escape(extras.get("date_peremption", ""))
+        date_production   = escape(self._display_date(extras.get("date_production", "")))
+        date_peremption   = escape(self._display_date(extras.get("date_peremption", "")))
         num_cert          = escape(extras.get("num_cert", ""))
-        num_prelevement   = escape(extras.get("num_prelevement", ""))
-        date_pv           = escape(extras.get("date_pv", ""))
+        num_prl           = escape(extras.get("num_prl", ""))
+        date_commerce     = escape(self._display_date(extras.get("date_commerce", "")))
         reference         = escape(extras.get("reference", ""))
+        ref_b_analyse     = escape(str(extras.get("ref_b_analyse", "") or ""))
+        invoice_number    = escape(str(extras.get("invoice_number", "") or ""))
 
         analyse_sentence = self._build_analysis_sentence(analyse_raw)
         result_text = "consommable" if cert_type == "CC" else "non consommable"
@@ -167,14 +189,22 @@ class CertificatePrinter:
 
         proces_verbal = escape(
             self._build_proces_verbal(
-                extras.get("num_prelevement", ""),
-                extras.get("date_pv", ""),
+                extras.get("num_acte", ""),
+                extras.get("num_prl", ""),
+                extras.get("date_commerce", ""),
                 year_two_digits,
             )
         )
 
         if not reference:
-            reference = f"N°/{year_two_digits}/{num_acte}"
+            reference = escape(
+                self._build_reference(
+                    extras.get("ref_b_analyse", ""),
+                    fd["date"],
+                    extras.get("invoice_number", ""),
+                    year_two_digits,
+                )
+            )
 
         left_logo = (
             f'<img src="{logos.get("left", "")}" style="width:44px;height:44px;object-fit:contain;">'
@@ -213,13 +243,14 @@ class CertificatePrinter:
     ET DE LA QUALITÉ DES DENRÉES ALIMENTAIRES
   </p>
 
-  <p style="text-align:center;font-size:17pt;font-weight:bold;text-decoration:underline;
-            margin:1pt 0 1pt 0;">
-    {title}
-  </p>
-  <p style="text-align:center;font-size:13pt;font-weight:bold;margin:0 0 8pt 0;">
-    {escape(header_number)}
-  </p>
+    <div style="text-align:center;margin:1pt 0 6pt 0;">
+        <p style="font-size:17.5pt;font-weight:700;line-height:1.0;letter-spacing:0.05pt;margin:0;">
+            {title}
+        </p>
+        <p style="font-size:12.8pt;font-weight:700;line-height:1.0;margin:2pt 0 0 0;">
+            {escape(header_number)}
+        </p>
+    </div>
 
   <p style="line-height:1.35;margin-bottom:6pt;font-size:10.8pt;font-weight:bold;">
     Je, soussigné, le Directeur de l'Agence de Contrôle de la Sécurité Sanitaire et de la
@@ -236,8 +267,7 @@ class CertificatePrinter:
     <tr><td><b>Date de production</b></td><td>:</td><td><b>{date_production}</b></td></tr>
     <tr><td><b>Date de péremption</b></td><td>:</td><td><b>{date_peremption}</b></td></tr>
     <tr><td><b>Lot</b></td><td>:</td><td><b>{num_lot}</b></td></tr>
-    <tr><td><b>N° Prélèvement</b></td><td>:</td><td><b>{num_prelevement}</b></td></tr>
-    <tr><td><b>Date PV</b></td><td>:</td><td><b>{date_pv}</b></td></tr>
+    <tr><td><b>Date commerce</b></td><td>:</td><td><b>{date_commerce}</b></td></tr>
     <tr><td><b>Procès-verbal de prélèvement</b></td><td>:</td><td><b>{proces_verbal}</b></td></tr>
     <tr><td><b>Société / Etablissement</b></td><td>:</td><td><b>{fd['company_name']}</b></td></tr>
     <tr><td><b>Responsable</b></td><td>:</td><td><b>{fd['responsable']}</b></td></tr>
@@ -360,15 +390,15 @@ class CertificatePrinter:
                 'CertificateTitle',
                 parent=center_style,
                 fontName='Times-Bold',
-                fontSize=13.4,
-                leading=15,
+                fontSize=16.0,
+                leading=16,
                 spaceAfter=1,
             )
             title_sub_style = ParagraphStyle(
                 'CertificateTitleSub',
                 parent=center_style,
                 fontName='Times-Bold',
-                fontSize=11.1,
+                fontSize=12.1,
                 leading=13,
             )
             intro_style = ParagraphStyle(
@@ -479,10 +509,16 @@ class CertificatePrinter:
 
             def build_value_table(product_name, cert_type, extras):
                 year_two_digits = date.today().strftime("%y")
-                num_prelevement = str(extras.get("num_prelevement", "") or "").strip()
-                date_pv = str(extras.get("date_pv", "") or "").strip()
-                proces_verbal = self._build_proces_verbal(num_prelevement, date_pv, year_two_digits)
-                reference = extras.get("reference") or f"N°/{year_two_digits}/{extras.get('num_acte', '')}"
+                num_acte = str(extras.get("num_acte", "") or "").strip()
+                num_prl = str(extras.get("num_prl", "") or "").strip()
+                date_commerce = str(extras.get("date_commerce", "") or "").strip()
+                proces_verbal = self._build_proces_verbal(num_acte, num_prl, date_commerce, year_two_digits)
+                reference = extras.get("reference") or self._build_reference(
+                    str(extras.get("ref_b_analyse", "") or "").strip(),
+                    fd["date"],
+                    str(extras.get("invoice_number", "") or "").strip(),
+                    year_two_digits,
+                )
                 quantity_value = (
                     f"{escape(str(extras.get('quantite', '') or ''))}"
                     f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"
@@ -492,9 +528,11 @@ class CertificatePrinter:
                     [Paragraph("Echantillon", label_style), Paragraph(":", label_style), Paragraph(escape(str(product_name or "")), value_style)],
                     [Paragraph("Classe", label_style), Paragraph(":", label_style), Paragraph(escape(str(extras.get('classe', '') or '')), value_style)],
                     [Paragraph("Quantité", label_style), Paragraph(":", label_style), Paragraph(quantity_value, value_style)],
-                    [Paragraph("Date de production", label_style), Paragraph(":", label_style), Paragraph(escape(str(extras.get('date_production', '') or '')), value_style)],
-                    [Paragraph("Date de péremption", label_style), Paragraph(":", label_style), Paragraph(escape(str(extras.get('date_peremption', '') or '')), value_style)],
+                    [Paragraph("N° Acte", label_style), Paragraph(":", label_style), Paragraph(escape(num_acte), value_style)],
+                    [Paragraph("Date de production", label_style), Paragraph(":", label_style), Paragraph(escape(self._display_date(str(extras.get('date_production', '') or ''))), value_style)],
+                    [Paragraph("Date de péremption", label_style), Paragraph(":", label_style), Paragraph(escape(self._display_date(str(extras.get('date_peremption', '') or ''))), value_style)],
                     [Paragraph("Lot", label_style), Paragraph(":", label_style), Paragraph(escape(str(extras.get('num_lot', '') or '')), value_style)],
+                    [Paragraph("Date commerce", label_style), Paragraph(":", label_style), Paragraph(escape(self._display_date(date_commerce)), value_style)],
                     [Paragraph("Procès-verbal de prélèvement", label_style), Paragraph(":", label_style), Paragraph(escape(proces_verbal), value_style)],
                     [Paragraph("Société / Etablissement", label_style), Paragraph(":", label_style), Paragraph(fd['company_name'], value_style)],
                     [Paragraph("Analyse", label_style), Paragraph(":", label_style), Paragraph(escape(str(extras.get('analyse', '') or '')), value_style)],
@@ -517,13 +555,12 @@ class CertificatePrinter:
                 extras = entry[3] if len(entry) > 3 else {}
                 year_two_digits = date.today().strftime("%y")
                 num_cert = str(extras.get("num_cert", "") or "").strip()
-                header_number = f"N°{num_cert}/{year_two_digits}-" if num_cert else f"N°/{year_two_digits}-"
+                header_number = f"N°{num_cert}/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}" if num_cert else f"N°/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
 
                 story.append(build_header_table())
-                story.append(Spacer(1, 8))
-                story.append(Paragraph(f"<u>{_TITLES[cert_type]}</u>", title_style))
+                story.append(Spacer(1, 6))
+                story.append(Paragraph(_TITLES[cert_type], title_style))
                 story.append(Paragraph(header_number, title_sub_style))
-                story.append(Paragraph(f"MSANP/SG/ACSSQDA/{cert_type}", title_sub_style))
                 story.append(Spacer(1, 8))
                 story.append(
                     Paragraph(

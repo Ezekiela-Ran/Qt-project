@@ -2,11 +2,22 @@ from models.database.tables import Tables
 
 class DatabaseManager(Tables):
     table_name = ""
+    CURRENT_SCHEMA_VERSION = 3
+    SCHEMA_VERSION_KEY = "schema_version"
+    MYSQL_SCHEMA_LOCK_NAME = "fac_schema_bootstrap"
+    MYSQL_SCHEMA_LOCK_TIMEOUT_SECONDS = 15
+    MYSQL_COUNTER_INIT_LOCK_WAIT_SECONDS = 5
 
     @staticmethod
     def _normalize_num_act(value):
         text = str(value or "").strip()
         return text or None
+
+    @staticmethod
+    def _normalize_bool_flag(value):
+        if value is None:
+            return None
+        return 1 if bool(value) else 0
 
     @staticmethod
     def _format_amount_for_display(value):
@@ -20,16 +31,90 @@ class DatabaseManager(Tables):
     def create_tables(cls):
         db = cls()
         try:
-            db.proforma_invoice_table()
-            db.standard_invoice_table()
-            db.product_type_table()
-            db.products_table()
-            db.invoice_client_table()
-            db.app_settings_table()
-            db.users_table()
-            db.migrate_tables()  # Ajouter les colonnes manquantes
+            if db.is_mysql:
+                db.ensure_mysql_schema_ready()
+            else:
+                db.bootstrap_schema()
         finally:
             db.close()
+
+    def ensure_mysql_schema_ready(self):
+        if not self._schema_requires_bootstrap():
+            return
+
+        if not self._acquire_mysql_schema_lock():
+            if self._wait_for_mysql_schema_ready():
+                return
+            raise RuntimeError(
+                "Initialisation du schema MySQL en cours sur un autre poste. "
+                "Patientez quelques secondes puis relancez l'application."
+            )
+
+        try:
+            if self._schema_requires_bootstrap():
+                self.bootstrap_schema()
+        finally:
+            self._release_mysql_schema_lock()
+
+    def bootstrap_schema(self):
+        self.proforma_invoice_table()
+        self.standard_invoice_table()
+        self.product_type_table()
+        self.products_table()
+        self.invoice_client_table()
+        self.certificate_entry_table()
+        self.app_settings_table()
+        self.users_table()
+        self.migrate_tables()
+        self.set_setting(self.SCHEMA_VERSION_KEY, self.CURRENT_SCHEMA_VERSION)
+
+    def _schema_requires_bootstrap(self) -> bool:
+        required_tables = {
+            "proforma_invoice",
+            "standard_invoice",
+            "product_type",
+            "products",
+            "invoice_client",
+            "certificate_entry",
+            "app_settings",
+            "users",
+        }
+        existing_tables = set(self.list_live_tables())
+        if not required_tables.issubset(existing_tables):
+            return True
+
+        stored_version = self.get_setting(self.SCHEMA_VERSION_KEY)
+        try:
+            return int(stored_version or 0) < self.CURRENT_SCHEMA_VERSION
+        except (TypeError, ValueError):
+            return True
+
+    def _acquire_mysql_schema_lock(self) -> bool:
+        self.cursor.execute("SELECT GET_LOCK(%s, %s) AS lock_acquired", (
+            self.MYSQL_SCHEMA_LOCK_NAME,
+            self.MYSQL_SCHEMA_LOCK_TIMEOUT_SECONDS,
+        ))
+        row = self.cursor.fetchone()
+        if not row:
+            return False
+        return bool(row.get("lock_acquired"))
+
+    def _release_mysql_schema_lock(self):
+        try:
+            self.cursor.execute("SELECT RELEASE_LOCK(%s)", (self.MYSQL_SCHEMA_LOCK_NAME,))
+            self.cursor.fetchone()
+        except Exception:
+            pass
+
+    def _wait_for_mysql_schema_ready(self) -> bool:
+        import time
+
+        deadline = time.monotonic() + self.MYSQL_SCHEMA_LOCK_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            if not self._schema_requires_bootstrap():
+                return True
+            time.sleep(1)
+        return not self._schema_requires_bootstrap()
 
     def _ensure_column(self, table_name, column_name, definition):
         if not self.column_exists(table_name, column_name):
@@ -37,12 +122,27 @@ class DatabaseManager(Tables):
 
     def migrate_tables(self):
         # Migration pour ajouter les colonnes manquantes si elles n'existent pas
+        self.certificate_entry_table()
         self._ensure_column("standard_invoice", "total", "DECIMAL(10,2) DEFAULT 0")
         self._ensure_column("proforma_invoice", "total", "DECIMAL(10,2) DEFAULT 0")
         self._ensure_column("standard_invoice", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         self._ensure_column("proforma_invoice", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         self._ensure_column("invoice_client", "ref_b_analyse", "INT NULL")
         self._ensure_column("invoice_client", "num_act", "VARCHAR(255) NULL")
+        self._ensure_column("certificate_entry", "quantity", "VARCHAR(255) NULL")
+        self._ensure_column("certificate_entry", "quantity_analysee", "VARCHAR(255) NULL")
+        self._ensure_column("certificate_entry", "num_lot", "VARCHAR(255) NULL")
+        self._ensure_column("certificate_entry", "num_act", "VARCHAR(255) NULL")
+        self._ensure_column("certificate_entry", "num_cert", "VARCHAR(255) NULL")
+        self._ensure_column("certificate_entry", "classe", "VARCHAR(255) NULL")
+        self._ensure_column("certificate_entry", "date_production", "VARCHAR(32) NULL")
+        self._ensure_column("certificate_entry", "date_production_modified", "INT NULL")
+        self._ensure_column("certificate_entry", "date_peremption", "VARCHAR(32) NULL")
+        self._ensure_column("certificate_entry", "date_peremption_modified", "INT NULL")
+        self._ensure_column("certificate_entry", "num_prl", "VARCHAR(255) NULL")
+        self._ensure_column("certificate_entry", "date_commerce", "VARCHAR(32) NULL")
+        self._ensure_column("certificate_entry", "date_commerce_modified", "INT NULL")
+        self._ensure_column("certificate_entry", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         self._ensure_column("users", "role", "VARCHAR(32) NOT NULL DEFAULT 'user'")
         self._ensure_column("users", "is_active", "INT NOT NULL DEFAULT 1")
         self._ensure_column("users", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
@@ -62,18 +162,20 @@ class DatabaseManager(Tables):
         self.cursor.execute("UPDATE users SET role = 'user' WHERE role IS NULL OR TRIM(role) = ''")
         self.cursor.execute("UPDATE users SET is_active = 1 WHERE is_active IS NULL")
 
-        if self.index_exists("uk_products_num_act"):
-            if self.is_mysql:
-                self.cursor.execute("DROP INDEX uk_products_num_act ON products")
-            else:
-                self.cursor.execute("DROP INDEX uk_products_num_act")
-
         if self.is_mysql:
-            self.cursor.execute("CREATE UNIQUE INDEX uk_products_num_act ON products(num_act)")
+            if not self.index_exists("uk_products_num_act"):
+                self.cursor.execute("CREATE UNIQUE INDEX uk_products_num_act ON products(num_act)")
+            if not self.index_exists("uk_certificate_entry_scope"):
+                self.cursor.execute(
+                    "CREATE UNIQUE INDEX uk_certificate_entry_scope ON certificate_entry(invoice_id, invoice_type, product_id, certificate_type)"
+                )
             if not self.index_exists("uk_users_username"):
                 self.cursor.execute("CREATE UNIQUE INDEX uk_users_username ON users(username)")
         else:
             self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_products_num_act ON products(num_act)")
+            self.cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uk_certificate_entry_scope ON certificate_entry(invoice_id, invoice_type, product_id, certificate_type)"
+            )
             self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username ON users(username)")
 
     def fetch_all(self):
@@ -128,22 +230,122 @@ class DatabaseManager(Tables):
         finally:
             cursor.close()
 
+    def has_invoice_history(self):
+        tables_to_check = (
+            "standard_invoice",
+            "proforma_invoice",
+            "invoice_client",
+        )
+        cursor = self.conn.cursor()
+        try:
+            for table_name in tables_to_check:
+                cursor.execute(f"SELECT EXISTS(SELECT 1 FROM {table_name} LIMIT 1)")
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return True
+            return False
+        finally:
+            cursor.close()
+
+    def are_document_counters_initialized(self):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) FROM app_settings WHERE setting_key IN (%s, %s)",
+                ("invoice_id_start", "ref_b_analyse_start"),
+            )
+            row = cursor.fetchone()
+            return bool(row and row[0] > 0)
+        finally:
+            cursor.close()
+
+    def get_last_archive_reset_year(self):
+        value = self.get_setting("last_archive_reset_year")
+        if value in (None, ""):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def can_archive_and_reset(self, year=None):
+        import datetime
+
+        target_year = int(year or datetime.date.today().year)
+        return self.get_last_archive_reset_year() != target_year
+
+    def get_catalog_signature(self):
+        cursor = self.conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) AS item_count, COALESCE(MAX(id), 0) AS max_id FROM product_type"
+            )
+            type_signature = cursor.fetchone() or {"item_count": 0, "max_id": 0}
+            cursor.execute(
+                "SELECT COUNT(*) AS item_count, COALESCE(MAX(id), 0) AS max_id FROM products"
+            )
+            product_signature = cursor.fetchone() or {"item_count": 0, "max_id": 0}
+            return {
+                "type_count": int(type_signature.get("item_count") or 0),
+                "type_max_id": int(type_signature.get("max_id") or 0),
+                "product_count": int(product_signature.get("item_count") or 0),
+                "product_max_id": int(product_signature.get("max_id") or 0),
+            }
+        finally:
+            cursor.close()
+
     def initialize_document_counters(self, invoice_start, ref_start):
         invoice_start = int(invoice_start)
         ref_start = int(ref_start)
         if invoice_start < 1 or ref_start < 1:
             raise ValueError("Les valeurs d'initialisation doivent être supérieures ou égales à 1.")
-        if self.has_business_data():
+        if self.has_invoice_history():
             raise ValueError(
-                "Initialisation impossible : des données existent déjà dans la base. Les compteurs ont déjà été initialisés et ne peuvent plus être modifiés."
+                "Initialisation impossible : des factures existent déjà dans la base. Les compteurs ne peuvent plus être modifiés."
             )
 
         with self.transaction():
-            self.reset_table_sequence("standard_invoice", invoice_start)
-            self.reset_table_sequence("proforma_invoice", invoice_start)
             self.set_setting("ref_b_analyse_start", ref_start)
             self.set_setting("ref_b_analyse_last", ref_start - 1)
             self.set_setting("invoice_id_start", invoice_start)
+
+    def _table_has_rows(self, table_name: str) -> bool:
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(f"SELECT EXISTS(SELECT 1 FROM {table_name} LIMIT 1)")
+            row = cursor.fetchone()
+            return bool(row and row[0])
+        finally:
+            cursor.close()
+
+    def _get_seed_invoice_id(self, table_name: str):
+        if self._table_has_rows(table_name):
+            return None
+
+        configured_start = self.get_setting("invoice_id_start", 1)
+        try:
+            invoice_id = int(configured_start or 1)
+        except (TypeError, ValueError):
+            invoice_id = 1
+        return max(invoice_id, 1)
+
+    def _insert_invoice_header(self, table_name: str, payload: dict):
+        seed_id = self._get_seed_invoice_id(table_name)
+        columns = list(payload.keys())
+        values = [payload[column] for column in columns]
+        if seed_id is not None:
+            columns = ["id", *columns]
+            values = [seed_id, *values]
+
+        placeholders = ", ".join(["%s"] * len(columns))
+        column_clause = ", ".join(columns)
+        self.cursor.execute(
+            f"INSERT INTO {table_name} ({column_clause}) VALUES ({placeholders})",
+            tuple(values),
+        )
+        if seed_id is not None:
+            return seed_id
+        return self.cursor.lastrowid
 
     def get_max_ref_b_analyse(self):
         """Return the last allocated global ref_b_analyse (int) or configured start-1."""
@@ -397,11 +599,20 @@ class DatabaseManager(Tables):
     
     def save_standard_invoice(self, company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total, selected_products, selected_refs=None, selected_num_acts=None):
         with self.transaction():
-            self.cursor.execute(
-                "INSERT INTO standard_invoice (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (company_name, stat, nif, address, date_issue, date_result, product_ref, resp, total)
+            invoice_id = self._insert_invoice_header(
+                "standard_invoice",
+                {
+                    "company_name": company_name,
+                    "stat": stat,
+                    "nif": nif,
+                    "address": address,
+                    "date_issue": date_issue,
+                    "date_result": date_result,
+                    "product_ref": product_ref,
+                    "resp": resp,
+                    "total": total,
+                },
             )
-            invoice_id = self.cursor.lastrowid
 
             selected_refs = selected_refs or {}
             selected_num_acts = selected_num_acts or {}
@@ -459,11 +670,17 @@ class DatabaseManager(Tables):
 
     def save_proforma_invoice(self, company_name, nif, stat, date, resp, total, selected_products):
         with self.transaction():
-            self.cursor.execute(
-                "INSERT INTO proforma_invoice (company_name, nif, stat, date, resp, total) VALUES (%s, %s, %s, %s, %s, %s)",
-                (company_name, nif, stat, date, resp, total)
+            invoice_id = self._insert_invoice_header(
+                "proforma_invoice",
+                {
+                    "company_name": company_name,
+                    "nif": nif,
+                    "stat": stat,
+                    "date": date,
+                    "resp": resp,
+                    "total": total,
+                },
             )
-            invoice_id = self.cursor.lastrowid
 
             for product_id in selected_products:
                 product = self.get_product_by_id(product_id)
@@ -508,6 +725,105 @@ class DatabaseManager(Tables):
             (invoice_id, invoice_type),
         )
         return self.cursor.fetchall()
+
+    def get_certificate_entries(self, invoice_id, invoice_type, product_ids=None):
+        cursor = self.conn.cursor(dictionary=True)
+        try:
+            query = (
+                "SELECT invoice_id, invoice_type, product_id, certificate_type, quantity, quantity_analysee, "
+                "num_lot, num_act, num_cert, classe, date_production, date_production_modified, "
+                "date_peremption, date_peremption_modified, num_prl, date_commerce, date_commerce_modified "
+                "FROM certificate_entry WHERE invoice_id=%s AND invoice_type=%s"
+            )
+            params = [invoice_id, invoice_type]
+            if product_ids:
+                placeholders = ", ".join(["%s"] * len(product_ids))
+                query += f" AND product_id IN ({placeholders})"
+                params.extend(product_ids)
+            query += " ORDER BY product_id ASC, certificate_type ASC"
+            cursor.execute(query, tuple(params))
+            return cursor.fetchall()
+        finally:
+            cursor.close()
+
+    def save_certificate_entry(self, invoice_id, invoice_type, product_id, certificate_type, payload):
+        normalized_payload = {
+            "quantity": str(payload.get("quantity") or "").strip(),
+            "quantity_analysee": str(payload.get("quantity_analysee") or "").strip(),
+            "num_lot": str(payload.get("num_lot") or "").strip(),
+            "num_act": self._normalize_num_act(payload.get("num_act")),
+            "num_cert": str(payload.get("num_cert") or "").strip(),
+            "classe": str(payload.get("classe") or "").strip(),
+            "date_production": str(payload.get("date_production") or "").strip(),
+            "date_production_modified": self._normalize_bool_flag(payload.get("date_production_modified")),
+            "date_peremption": str(payload.get("date_peremption") or "").strip(),
+            "date_peremption_modified": self._normalize_bool_flag(payload.get("date_peremption_modified")),
+            "num_prl": str(payload.get("num_prl") or "").strip(),
+            "date_commerce": str(payload.get("date_commerce") or "").strip(),
+            "date_commerce_modified": self._normalize_bool_flag(payload.get("date_commerce_modified")),
+        }
+
+        with self.transaction():
+            self.cursor.execute(
+                "SELECT id FROM certificate_entry WHERE invoice_id=%s AND invoice_type=%s AND product_id=%s AND certificate_type=%s",
+                (invoice_id, invoice_type, product_id, certificate_type),
+            )
+            existing = self.cursor.fetchone()
+
+            if existing:
+                self.cursor.execute(
+                    "UPDATE certificate_entry SET quantity=%s, quantity_analysee=%s, num_lot=%s, num_act=%s, "
+                    "num_cert=%s, classe=%s, date_production=%s, date_production_modified=%s, "
+                    "date_peremption=%s, date_peremption_modified=%s, num_prl=%s, date_commerce=%s, date_commerce_modified=%s "
+                    "WHERE invoice_id=%s AND invoice_type=%s AND product_id=%s AND certificate_type=%s",
+                    (
+                        normalized_payload["quantity"],
+                        normalized_payload["quantity_analysee"],
+                        normalized_payload["num_lot"],
+                        normalized_payload["num_act"],
+                        normalized_payload["num_cert"],
+                        normalized_payload["classe"],
+                        normalized_payload["date_production"],
+                        normalized_payload["date_production_modified"],
+                        normalized_payload["date_peremption"],
+                        normalized_payload["date_peremption_modified"],
+                        normalized_payload["num_prl"],
+                        normalized_payload["date_commerce"],
+                        normalized_payload["date_commerce_modified"],
+                        invoice_id,
+                        invoice_type,
+                        product_id,
+                        certificate_type,
+                    ),
+                )
+                return existing.get("id")
+
+            self.cursor.execute(
+                "INSERT INTO certificate_entry (invoice_id, invoice_type, product_id, certificate_type, quantity, quantity_analysee, "
+                "num_lot, num_act, num_cert, classe, date_production, date_production_modified, date_peremption, "
+                "date_peremption_modified, num_prl, date_commerce, date_commerce_modified) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    invoice_id,
+                    invoice_type,
+                    product_id,
+                    certificate_type,
+                    normalized_payload["quantity"],
+                    normalized_payload["quantity_analysee"],
+                    normalized_payload["num_lot"],
+                    normalized_payload["num_act"],
+                    normalized_payload["num_cert"],
+                    normalized_payload["classe"],
+                    normalized_payload["date_production"],
+                    normalized_payload["date_production_modified"],
+                    normalized_payload["date_peremption"],
+                    normalized_payload["date_peremption_modified"],
+                    normalized_payload["num_prl"],
+                    normalized_payload["date_commerce"],
+                    normalized_payload["date_commerce_modified"],
+                ),
+            )
+            return self.cursor.lastrowid
     
     def get_standard_invoice_by_id(self, invoice_id):
         self.cursor.execute("SELECT * FROM standard_invoice WHERE id=%s", (invoice_id,))
@@ -519,11 +835,13 @@ class DatabaseManager(Tables):
     
     def delete_standard_invoice(self, invoice_id):
         with self.transaction():
+            self.cursor.execute("DELETE FROM certificate_entry WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'standard'))
             self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'standard'))
             self.cursor.execute("DELETE FROM standard_invoice WHERE id=%s", (invoice_id,))
     
     def delete_proforma_invoice(self, invoice_id):
         with self.transaction():
+            self.cursor.execute("DELETE FROM certificate_entry WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'proforma'))
             self.cursor.execute("DELETE FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s", (invoice_id, 'proforma'))
             self.cursor.execute("DELETE FROM proforma_invoice WHERE id=%s", (invoice_id,))
 
@@ -537,6 +855,12 @@ class DatabaseManager(Tables):
         import datetime
         if year is None:
             year = datetime.date.today().year
+        year = int(year)
+        if not self.can_archive_and_reset(year):
+            raise ValueError(
+                f"La réinitialisation a déjà été effectuée pour l'année {year}."
+            )
+
         suffix = str(year)
         with self.transaction():
             tables = self.list_live_tables()
@@ -546,9 +870,10 @@ class DatabaseManager(Tables):
                 archive_name = f"{tbl}_archive_{suffix}"
                 if self.is_mysql:
                     self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {archive_name} LIKE {tbl}")
+                    self.cursor.execute(f"INSERT IGNORE INTO {archive_name} SELECT * FROM {tbl}")
                 else:
                     self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {archive_name} AS SELECT * FROM {tbl} WHERE 0")
-                self.cursor.execute(f"INSERT INTO {archive_name} SELECT * FROM {tbl}")
+                    self.cursor.execute(f"INSERT INTO {archive_name} SELECT * FROM {tbl}")
 
             self.set_foreign_keys(False)
             try:
@@ -578,8 +903,12 @@ class DatabaseManager(Tables):
                 pass
 
             try:
-                self.cursor.execute("DELETE FROM app_settings WHERE setting_key IN ('ref_b_analyse_start', 'invoice_id_start')")
+                self.cursor.execute(
+                    "DELETE FROM app_settings WHERE setting_key IN ('ref_b_analyse_start', 'ref_b_analyse_last', 'invoice_id_start')"
+                )
             except Exception:
                 pass
+
+            self.set_setting("last_archive_reset_year", year)
 
   
