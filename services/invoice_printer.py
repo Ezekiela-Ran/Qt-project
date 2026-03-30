@@ -23,17 +23,7 @@ class InvoicePrinter:
 
     @staticmethod
     def _draw_footer(canvas, doc):
-        canvas.saveState()
-        footer_y = 20
-        canvas.setFont("Times-Italic", 8)
-        canvas.drawString(
-            doc.leftMargin,
-            footer_y,
-            "(*) Chèque vise à l'ordre de Madame le RECEVEUR GENERAL .",
-        )
-        canvas.setFont("Times-Roman", 9)
-        canvas.drawRightString(A4[0] - doc.rightMargin, footer_y, "Quittance N°")
-        canvas.restoreState()
+        return
 
     @staticmethod
     def _build_payment_mode_table(styles):
@@ -141,6 +131,13 @@ class InvoicePrinter:
             fontSize=11,
             alignment=TA_CENTER,
             fontName='Helvetica-Bold'
+        )
+        signature_note_style = ParagraphStyle(
+            name="SignatureNote",
+            parent=styles['Normal'],
+            fontSize=9,
+            alignment=TA_CENTER,
+            leading=11,
         )
         
         elements = []
@@ -304,18 +301,23 @@ class InvoicePrinter:
         elements.append(footer_para)
         elements.append(Spacer(1, 10))
         elements.append(self._build_payment_mode_table(styles))
-        elements.append(Spacer(1, 28))
+        elements.append(Spacer(1, 24))
         
-        # Signature lines
+        # Zone de signature avec mentions en dessous des intitulés.
         sig_table = Table([
-            ['Le Client', 'Le(a) Caissier(e)']
-        ])
+            ['Le Client', 'Le(a) Caissier(e)'],
+            [
+                Paragraph("(*) Chèque vise à l'ordre de Madame le RECEVEUR GENERAL .", signature_note_style),
+                Paragraph("Quittance", signature_note_style),
+            ],
+        ], colWidths=[page_width * 0.5, page_width * 0.5])
         sig_table.setStyle(TableStyle([
-            ('LEFTPADDING', (0,0), (-1,-1), 50),
-            ('RIGHTPADDING', (0,0), (-1,-1), 50),
-            ('TOPPADDING', (0,0), (-1,-1), 40),
-            ('LINEABOVE', (0,0), (-1,0), 1, colors.black),
-            ('LINEABOVE', (1,0), (1,0), 1, colors.black),
+            ('LEFTPADDING', (0,0), (-1,-1), 12),
+            ('RIGHTPADDING', (0,0), (-1,-1), 12),
+            ('TOPPADDING', (0,0), (-1,0), 0),
+            ('BOTTOMPADDING', (0,0), (-1,0), 0),
+            ('TOPPADDING', (0,1), (-1,1), 52),
+            ('BOTTOMPADDING', (0,1), (-1,1), 0),
             ('ALIGN', (0,0), (-1,-1), 'CENTER'),
             ('FONTSIZE', (0,0), (-1,-1), 9),
         ]))

@@ -41,3 +41,10 @@ class HeadLayout(QtWidgets.QWidget):
 
         self.head_layout.addWidget(self.form, 1)
         self.head_layout.addWidget(self.record, 1)
+
+    def cleanup(self):
+        for child_name in ("form", "record"):
+            child = getattr(self, child_name, None)
+            cleanup = getattr(child, "cleanup", None)
+            if callable(cleanup):
+                cleanup()

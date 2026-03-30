@@ -1,9 +1,33 @@
 # Environnement virtuel
 .venv/
 env/
+.env/
 
 # Cache de python
 __pycache__/
+*.py[cod]
+*$py.class
+
+# Outils Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build / distribution
+build/
+dist/
+build_updated/
+dist_updated/
+*.egg-info/
+pip-wheel-metadata/
+
+# Logs et sorties locales
+*.log
+build_exitcode.txt
+build_pyinstaller.log
 
 .python-version
 

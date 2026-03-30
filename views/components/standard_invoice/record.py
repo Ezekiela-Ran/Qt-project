@@ -4,6 +4,9 @@ from views.foundation.templates.records import ListRecordTemplate
 from views.foundation.globals import GlobalVariable
 from models.standard_invoice import StandardInvoice
 
+
+AUTO_REFRESH_INTERVAL_MS = 5000
+
 class StandardInvoiceRecord(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -17,10 +20,26 @@ class StandardInvoiceRecord(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.list_record)
         self.load_records()
+        self.refresh_timer = QtCore.QTimer(self)
+        self.refresh_timer.setInterval(AUTO_REFRESH_INTERVAL_MS)
+        self.refresh_timer.timeout.connect(self.refresh_records_silently)
+        self.refresh_timer.start()
 
     def load_records(self):
         self.standardinvoice.data = self.standardinvoice.get_standard_invoices()
         self.list_record.update_data(self.standardinvoice.data)
+
+    def refresh_records_silently(self):
+        if not self.isVisible():
+            return
+        try:
+            latest_data = self.standardinvoice.get_standard_invoices()
+        except Exception:
+            return
+        if latest_data == self.list_record.all_data:
+            return
+        self.standardinvoice.data = latest_data
+        self.list_record.update_data(latest_data, preserve_state=True)
 
     def load_invoice_data(self, invoice_id):
         invoice = self.standardinvoice.get_standard_invoice_by_id(invoice_id)
@@ -75,5 +94,12 @@ class StandardInvoiceRecord(QtWidgets.QWidget):
         if reply == QMessageBox.Yes:
             self.standardinvoice.delete_standard_invoice(invoice_id)
             self.load_records()
+
+    def cleanup(self):
+        if hasattr(self, 'refresh_timer'):
+            self.refresh_timer.stop()
+        close = getattr(self.standardinvoice, 'close', None)
+        if callable(close):
+            close()
 
         

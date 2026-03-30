@@ -68,6 +68,22 @@ class ListRecordTemplate(QWidget):
                 self.table.setItem(row_position, column, QTableWidgetItem(str(value)))
         self.table.setSortingEnabled(True)
 
+    def _selected_record_id(self):
+        current_row = self.table.currentRow()
+        if current_row < 0:
+            return None
+        item = self.table.item(current_row, 0)
+        return item.text() if item else None
+
+    def _restore_selected_record(self, record_id):
+        if record_id is None:
+            return
+        for row_index in range(self.table.rowCount()):
+            item = self.table.item(row_index, 0)
+            if item and item.text() == str(record_id):
+                self.table.selectRow(row_index)
+                return
+
     def on_item_selected(self):
         current_row = self.table.currentRow()
         if current_row >= 0 and hasattr(self.parent(), 'load_invoice_data'):
@@ -82,8 +98,29 @@ class ListRecordTemplate(QWidget):
             self.data = [row for row in self.all_data if any(search_text in str(cell).lower() for cell in row)]
         self._add_row()
 
-    def update_data(self, new_data):
+    def update_data(self, new_data, preserve_state=False):
+        search_text = self.search_input.text() if preserve_state else ""
+        selected_record_id = self._selected_record_id() if preserve_state else None
         self.all_data = new_data.copy()
-        self.data = self.all_data.copy()
-        self.search_input.clear()
-        self._add_row()
+        search_blocker = QtCore.QSignalBlocker(self.search_input)
+        table_blocker = QtCore.QSignalBlocker(self.table)
+        try:
+            if preserve_state:
+                self.search_input.setText(search_text)
+            else:
+                self.search_input.clear()
+
+            normalized_search = self.search_input.text().strip().lower()
+            if not normalized_search:
+                self.data = self.all_data.copy()
+            else:
+                self.data = [
+                    row for row in self.all_data
+                    if any(normalized_search in str(cell).lower() for cell in row)
+                ]
+            self._add_row()
+            if preserve_state:
+                self._restore_selected_record(selected_record_id)
+        finally:
+            del table_blocker
+            del search_blocker
