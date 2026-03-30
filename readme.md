@@ -28,10 +28,14 @@ DATABASE CONFIGURATION:
 
 The application is intended to run on a shared MySQL database so that every PC uses the same administrators, users and business data.
 
-At first launch, the software asks whether the current PC is:
+At first launch, if no explicit MySQL configuration is present, the software now starts with a local SQLite database automatically. The local database file and all required tables are created by the application itself on first use.
+
+When you open the MySQL configuration screen, the software asks whether the current PC is:
 
 - the server PC
 - a client PC
+
+This MySQL configuration screen is now only needed when you want to switch from the default local SQLite mode to a shared MySQL deployment.
 
 Administrators can also edit the database configuration directly from the application:
 

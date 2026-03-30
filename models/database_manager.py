@@ -62,14 +62,9 @@ class DatabaseManager(Tables):
         self.cursor.execute("UPDATE users SET role = 'user' WHERE role IS NULL OR TRIM(role) = ''")
         self.cursor.execute("UPDATE users SET is_active = 1 WHERE is_active IS NULL")
 
-        if self.index_exists("uk_products_num_act"):
-            if self.is_mysql:
-                self.cursor.execute("DROP INDEX uk_products_num_act ON products")
-            else:
-                self.cursor.execute("DROP INDEX uk_products_num_act")
-
         if self.is_mysql:
-            self.cursor.execute("CREATE UNIQUE INDEX uk_products_num_act ON products(num_act)")
+            if not self.index_exists("uk_products_num_act"):
+                self.cursor.execute("CREATE UNIQUE INDEX uk_products_num_act ON products(num_act)")
             if not self.index_exists("uk_users_username"):
                 self.cursor.execute("CREATE UNIQUE INDEX uk_users_username ON users(username)")
         else:

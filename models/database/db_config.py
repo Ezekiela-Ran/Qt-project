@@ -14,7 +14,7 @@ from models.database.sqlite_backend import connect as connect_sqlite
 
 
 DEFAULT_DB_NAME = 'invoicing'
-DEFAULT_DB_ENGINE = 'mysql'
+DEFAULT_DB_ENGINE = 'sqlite'
 DEFAULT_DB_HOST = '127.0.0.1'
 DEFAULT_DB_PORT = 3306
 DEFAULT_DB_USER = 'lfca_app'
@@ -26,7 +26,7 @@ def build_default_database_config() -> dict:
         'engine': DEFAULT_DB_ENGINE,
         'sqlite_path': _default_sqlite_path(),
         'deployment_role': 'client',
-        'setup_completed': False,
+        'setup_completed': True,
         'server_host_hint': '',
         'mysql': {
             'host': DEFAULT_DB_HOST,
@@ -179,7 +179,10 @@ def database_config_requires_setup() -> bool:
 
     config_file = Path(settings['config_file'])
     if not config_file.exists():
-        return True
+        return False
+
+    if settings['engine'] == 'sqlite':
+        return False
 
     if settings['engine'] != 'mysql':
         return True

@@ -4,7 +4,7 @@ import tempfile
 import traceback
 from pathlib import Path
 
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtWidgets import QMessageBox
 
 from models.database.db_config import database_config_requires_setup
@@ -52,16 +52,24 @@ def authenticate_startup_user(parent=None):
     try:
         if not auth_service.has_admin():
             dialog = SetupAdminDialog(auth_service, parent)
-            if dialog.exec() != QtWidgets.QDialog.Accepted or not dialog.created_user:
+            if exec_startup_dialog(dialog) != QtWidgets.QDialog.Accepted or not dialog.created_user:
                 return None
             return dialog.created_user
 
         dialog = LoginDialog(auth_service, parent)
-        if dialog.exec() != QtWidgets.QDialog.Accepted or not dialog.authenticated_user:
+        if exec_startup_dialog(dialog) != QtWidgets.QDialog.Accepted or not dialog.authenticated_user:
             return None
         return dialog.authenticated_user
     finally:
         auth_service.close()
+
+
+def exec_startup_dialog(dialog: QtWidgets.QDialog) -> int:
+    dialog.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+    dialog.show()
+    dialog.raise_()
+    dialog.activateWindow()
+    return dialog.exec()
 
 
 class ApplicationController:
@@ -86,7 +94,7 @@ class ApplicationController:
             self.app.quit()
 
     def _authenticate_and_show_main_view(self) -> bool:
-        user = authenticate_startup_user(self.window)
+        user = authenticate_startup_user()
         if not user:
             return False
 
@@ -115,8 +123,8 @@ class ApplicationController:
         if not database_config_requires_setup():
             return True
 
-        dialog = DatabaseConfigDialog(self.window, first_run=True)
-        return dialog.exec() == QtWidgets.QDialog.Accepted
+        dialog = DatabaseConfigDialog(first_run=True)
+        return exec_startup_dialog(dialog) == QtWidgets.QDialog.Accepted
 
 
 def log_startup_error(exc: Exception) -> Path:
