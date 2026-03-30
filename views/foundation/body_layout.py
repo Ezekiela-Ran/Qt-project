@@ -47,10 +47,6 @@ class BodyLayout(QtWidgets.QWidget):
         self.save_button = QtWidgets.QPushButton("Enregistrer")
         self.save_button.setObjectName("saveButton")
 
-        # Bouton imprimer
-        self.print_button = QtWidgets.QPushButton("Imprimer")
-        self.print_button.setObjectName("printButton")
-
         # Bouton aperçu
         self.preview_button = QtWidgets.QPushButton("Aperçu")
         self.preview_button.setObjectName("previewButton")
@@ -68,7 +64,6 @@ class BodyLayout(QtWidgets.QWidget):
         bottom_layout.addWidget(self.net_a_payer_label)
         bottom_layout.addStretch()
         bottom_layout.addWidget(self.save_button)
-        bottom_layout.addWidget(self.print_button)
         bottom_layout.addWidget(self.preview_button)
         if invoice_type != "proforma":
             bottom_layout.addWidget(self.certificate_button)
@@ -86,7 +81,6 @@ class BodyLayout(QtWidgets.QWidget):
 
         # Connecter le bouton
         self.save_button.clicked.connect(self.save_invoice)
-        self.print_button.clicked.connect(self.print_invoice)
         self.preview_button.clicked.connect(self.preview_invoice)
         if invoice_type != "proforma":
             self.certificate_button.clicked.connect(self.open_certificate_dialog)

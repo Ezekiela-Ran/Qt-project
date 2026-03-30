@@ -3,6 +3,10 @@ from models.proforma_invoice import ProformaInvoice
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import QDate
 from views.foundation.globals import GlobalVariable
+
+
+AUTO_REFRESH_INTERVAL_MS = 5000
+
 class ProformaInvoiceRecord(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -16,10 +20,26 @@ class ProformaInvoiceRecord(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.list_record)
         self.load_records()
+        self.refresh_timer = QtCore.QTimer(self)
+        self.refresh_timer.setInterval(AUTO_REFRESH_INTERVAL_MS)
+        self.refresh_timer.timeout.connect(self.refresh_records_silently)
+        self.refresh_timer.start()
 
     def load_records(self):
         self.proformainvoice.data = self.proformainvoice.get_proforma_invoices()
         self.list_record.update_data(self.proformainvoice.data)
+
+    def refresh_records_silently(self):
+        if not self.isVisible():
+            return
+        try:
+            latest_data = self.proformainvoice.get_proforma_invoices()
+        except Exception:
+            return
+        if latest_data == self.list_record.all_data:
+            return
+        self.proformainvoice.data = latest_data
+        self.list_record.update_data(latest_data, preserve_state=True)
 
     def load_invoice_data(self, invoice_id):
         invoice = self.proformainvoice.get_proforma_invoice_by_id(invoice_id)
@@ -54,3 +74,10 @@ class ProformaInvoiceRecord(QtWidgets.QWidget):
         if reply == QMessageBox.Yes:
             self.proformainvoice.delete_proforma_invoice(invoice_id)
             self.load_records()
+
+    def cleanup(self):
+        if hasattr(self, 'refresh_timer'):
+            self.refresh_timer.stop()
+        close = getattr(self.proformainvoice, 'close', None)
+        if callable(close):
+            close()
