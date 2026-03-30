@@ -157,6 +157,7 @@ Notes:
 - The application now uses explicit transactions for critical multi-step writes to reduce partial saves and counter collisions in multi-user MySQL mode.
 - The Ref.b.analyse allocation is serialized for MySQL to avoid duplicate values when several clients work at the same time.
 - If the configured MySQL server is unreachable at startup, FaC now fails fast with an explicit startup error instead of appearing frozen for a long TCP timeout.
+- MySQL schema creation and migration are now executed only when the shared database actually needs them, instead of on every client startup, to avoid blocking the other PCs on the network.
 
 If your MySQL account does not exist or has no privileges, create/grant it in MySQL:
 
