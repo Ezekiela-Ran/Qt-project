@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QPushButton, QCheckBox, QWidget, QAbstractItemView, QLabel, QHeaderView,
     QMessageBox, QLineEdit, QDateEdit,
 )
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, Signal
 
 from views.certificate.certificate_printer import CertificatePrinter
 from utils.path_utils import resolve_resource_path
@@ -49,6 +49,44 @@ _HEADERS = [
     "CNC",
     "Imprimer",
 ]
+
+
+class OptionalDateEdit(QDateEdit):
+    cleared = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCalendarPopup(True)
+        self.setDateRange(QDate(1900, 1, 1), QDate(7999, 12, 31))
+        self.setDisplayFormat("dd/MM/yyyy")
+        self.setSpecialValueText("")
+        self.setMinimumWidth(112)
+        self.setProperty("user_modified", False)
+        self.setProperty("loading_value", False)
+        self._set_empty_state()
+
+    def _set_empty_state(self):
+        self.setDate(self.minimumDate())
+        line_edit = self.lineEdit()
+        if line_edit is not None:
+            line_edit.clear()
+
+    def clear_date(self):
+        self.setProperty("loading_value", True)
+        try:
+            self._set_empty_state()
+        finally:
+            self.setProperty("loading_value", False)
+        self.setProperty("user_modified", False)
+        self.cleared.emit()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+            self.clear_date()
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
 
 
 class CertificateDialog(QDialog):
@@ -285,6 +323,9 @@ class CertificateDialog(QDialog):
         date_prod_edit.dateChanged.connect(lambda _date, r=row_index, e=date_prod_edit: self._on_date_edit_changed(r, e))
         date_peremp_edit.dateChanged.connect(lambda _date, r=row_index, e=date_peremp_edit: self._on_date_edit_changed(r, e))
         date_pv_edit.dateChanged.connect(lambda _date, r=row_index, e=date_pv_edit: self._on_date_edit_changed(r, e))
+        date_prod_edit.cleared.connect(lambda r=row_index: self._on_row_data_changed(r))
+        date_peremp_edit.cleared.connect(lambda r=row_index: self._on_row_data_changed(r))
+        date_pv_edit.cleared.connect(lambda r=row_index: self._on_row_data_changed(r))
 
         if saved_entries.get("CC"):
             actual_cc.setChecked(True)
@@ -301,20 +342,17 @@ class CertificateDialog(QDialog):
         return container
 
     @staticmethod
-    def _make_date_edit() -> QDateEdit:
-        edit = QDateEdit()
-        edit.setCalendarPopup(True)
-        edit.setDateRange(QDate(1900, 1, 1), QDate(7999, 12, 31))
-        edit.setDisplayFormat("dd/MM/yyyy")
-        edit.setDate(QDate.currentDate())
-        edit.setMinimumWidth(112)
-        edit.setProperty("user_modified", False)
-        edit.setProperty("loading_value", False)
+    def _make_date_edit() -> OptionalDateEdit:
+        edit = OptionalDateEdit()
         return edit
 
     @staticmethod
     def _date_edit_value(edit: QDateEdit) -> str:
-        return edit.date().toString("dd/MM/yyyy") if bool(edit.property("user_modified")) else ""
+        if not bool(edit.property("user_modified")):
+            return ""
+        if edit.date() == edit.minimumDate():
+            return ""
+        return edit.date().toString("dd/MM/yyyy")
 
     @staticmethod
     def _legacy_date_was_modified(value: str) -> bool:
@@ -389,7 +427,10 @@ class CertificateDialog(QDialog):
                 edit.setDate(CertificateDialog._parse_date_value(text))
                 edit.setProperty("user_modified", True)
             else:
-                edit.setDate(QDate.currentDate())
+                if isinstance(edit, OptionalDateEdit):
+                    edit._set_empty_state()
+                else:
+                    edit.setDate(edit.minimumDate())
                 edit.setProperty("user_modified", False)
         finally:
             edit.setProperty("loading_value", False)

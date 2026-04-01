@@ -2,6 +2,9 @@ from pathlib import Path
 import sqlite3
 
 
+SQLITE_CONNECT_TIMEOUT_SECONDS = 10
+
+
 class SQLiteCursorWrapper:
     def __init__(self, cursor: sqlite3.Cursor, dictionary: bool = False):
         self._cursor = cursor
@@ -53,9 +56,13 @@ class SQLiteCursorWrapper:
 
 
 class SQLiteConnectionWrapper:
-    def __init__(self, database_path: Path):
-        database_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(database_path))
+    def __init__(self, database_path: Path, *, create_if_missing: bool = True):
+        if create_if_missing:
+            database_path.parent.mkdir(parents=True, exist_ok=True)
+        elif not database_path.exists():
+            raise FileNotFoundError(f"Base SQLite introuvable: {database_path}")
+
+        self._conn = sqlite3.connect(str(database_path), timeout=SQLITE_CONNECT_TIMEOUT_SECONDS)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self.autocommit = False
@@ -73,5 +80,5 @@ class SQLiteConnectionWrapper:
         self._conn.close()
 
 
-def connect(database_path: Path) -> SQLiteConnectionWrapper:
-    return SQLiteConnectionWrapper(database_path)
+def connect(database_path: Path, *, create_if_missing: bool = True) -> SQLiteConnectionWrapper:
+    return SQLiteConnectionWrapper(database_path, create_if_missing=create_if_missing)

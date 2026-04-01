@@ -4,9 +4,6 @@ class DatabaseManager(Tables):
     table_name = ""
     CURRENT_SCHEMA_VERSION = 3
     SCHEMA_VERSION_KEY = "schema_version"
-    MYSQL_SCHEMA_LOCK_NAME = "fac_schema_bootstrap"
-    MYSQL_SCHEMA_LOCK_TIMEOUT_SECONDS = 15
-    MYSQL_COUNTER_INIT_LOCK_WAIT_SECONDS = 5
 
     @staticmethod
     def _normalize_num_act(value):
@@ -31,30 +28,9 @@ class DatabaseManager(Tables):
     def create_tables(cls):
         db = cls()
         try:
-            if db.is_mysql:
-                db.ensure_mysql_schema_ready()
-            else:
-                db.bootstrap_schema()
+            db.bootstrap_schema()
         finally:
             db.close()
-
-    def ensure_mysql_schema_ready(self):
-        if not self._schema_requires_bootstrap():
-            return
-
-        if not self._acquire_mysql_schema_lock():
-            if self._wait_for_mysql_schema_ready():
-                return
-            raise RuntimeError(
-                "Initialisation du schema MySQL en cours sur un autre poste. "
-                "Patientez quelques secondes puis relancez l'application."
-            )
-
-        try:
-            if self._schema_requires_bootstrap():
-                self.bootstrap_schema()
-        finally:
-            self._release_mysql_schema_lock()
 
     def bootstrap_schema(self):
         self.proforma_invoice_table()
@@ -89,32 +65,6 @@ class DatabaseManager(Tables):
         except (TypeError, ValueError):
             return True
 
-    def _acquire_mysql_schema_lock(self) -> bool:
-        self.cursor.execute("SELECT GET_LOCK(%s, %s) AS lock_acquired", (
-            self.MYSQL_SCHEMA_LOCK_NAME,
-            self.MYSQL_SCHEMA_LOCK_TIMEOUT_SECONDS,
-        ))
-        row = self.cursor.fetchone()
-        if not row:
-            return False
-        return bool(row.get("lock_acquired"))
-
-    def _release_mysql_schema_lock(self):
-        try:
-            self.cursor.execute("SELECT RELEASE_LOCK(%s)", (self.MYSQL_SCHEMA_LOCK_NAME,))
-            self.cursor.fetchone()
-        except Exception:
-            pass
-
-    def _wait_for_mysql_schema_ready(self) -> bool:
-        import time
-
-        deadline = time.monotonic() + self.MYSQL_SCHEMA_LOCK_TIMEOUT_SECONDS
-        while time.monotonic() < deadline:
-            if not self._schema_requires_bootstrap():
-                return True
-            time.sleep(1)
-        return not self._schema_requires_bootstrap()
 
     def _ensure_column(self, table_name, column_name, definition):
         if not self.column_exists(table_name, column_name):
