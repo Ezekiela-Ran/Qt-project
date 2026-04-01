@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QTableWidgetItem, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QTableWidget, QAbstractItemView, QLineEdit, QLabel, QInputDialog, QMessageBox,
 )
 from PySide6.QtGui import QIntValidator, QColor
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QSignalBlocker
 from utils.path_utils import resolve_resource_path
 from views.foundation.globals import GlobalVariable
 
@@ -25,6 +25,9 @@ class ProductManager(QWidget):
         self.loaded_record_locked = False
         self.can_manage_catalog = GlobalVariable.is_admin()
         self.catalog_signature = None
+        self.active_edit_row = None
+        self.pending_catalog_reload = False
+        self.pending_catalog_signature = None
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -307,6 +310,8 @@ class ProductManager(QWidget):
     def toggle_edit(self, row):
         if not self.can_manage_catalog:
             return
+        if self.active_edit_row is not None and self.active_edit_row != row:
+            return
         designation_item = self.product_table.item(row, 0)
         if designation_item is None:
             return
@@ -330,13 +335,14 @@ class ProductManager(QWidget):
         btn = self.product_table.cellWidget(row, btn_col)
         if widget.isReadOnly():
             # Start edit (subtotal reste non modifiable)
+            self.active_edit_row = row
             btn.setText("Sauver")
             self._begin_designation_edit(row)
             # Remove display formatting while editing amount fields.
             for col in amount_cols:
                 amount_widget = self.product_table.cellWidget(row, col)
                 if amount_widget:
-                    amount_widget.setText(str(int(self.parse_number(amount_widget.text()))))
+                    self._set_line_edit_text(amount_widget, str(int(self.parse_number(amount_widget.text()))))
             for col in editable_cols:
                 self.product_table.cellWidget(row, col).setReadOnly(False)
             self.product_table.cellWidget(row, focus_col).setFocus()
@@ -347,14 +353,19 @@ class ProductManager(QWidget):
                 return
             if not self._save_designation_edit(row, pid):
                 return
-            btn.setText("Modifier")
             self.on_price_component_changed(row)
+            self._persist_row_changes(row, pid)
+            btn.setText("Modifier")
             for col in amount_cols:
                 amount_widget = self.product_table.cellWidget(row, col)
                 if amount_widget:
-                    amount_widget.setText(self.format_number(amount_widget.text()))
+                    self._set_line_edit_text(amount_widget, self.format_number(amount_widget.text()))
             for col in editable_cols:
                 self.product_table.cellWidget(row, col).setReadOnly(True)
+            self.active_edit_row = None
+            if self.selected_products.get(pid, False):
+                self.selection_changed.emit()
+            self._flush_pending_catalog_reload()
 
     def toggle_edit_from_sender(self):
         if not self.can_manage_catalog:
@@ -373,6 +384,127 @@ class ProductManager(QWidget):
             if self.product_table.cellWidget(row, column) is button:
                 return row
         return -1
+
+    def _find_row_for_product(self, product_id):
+        for row in range(self.product_table.rowCount()):
+            item = self.product_table.item(row, 0)
+            if item and item.data(Qt.UserRole) == product_id:
+                return row
+        return -1
+
+    def _is_edit_active(self):
+        return self.active_edit_row is not None
+
+    def _set_line_edit_text(self, widget, text):
+        if widget is None:
+            return
+        blocker = QSignalBlocker(widget)
+        try:
+            widget.setText(text)
+        finally:
+            del blocker
+
+    def _flush_pending_catalog_reload(self):
+        if not self.pending_catalog_reload or self._is_edit_active():
+            return
+
+        previous_signature = self.catalog_signature
+        self.pending_catalog_reload = False
+        self.pending_catalog_signature = None
+
+        latest_signature = self._safe_catalog_signature()
+        if latest_signature is None or latest_signature == previous_signature:
+            return
+
+        self.catalog_signature = latest_signature
+        self._reload_catalog_preserving_state()
+        self._show_catalog_notification("Le catalogue a ete mis a jour automatiquement.")
+
+    def _mark_catalog_reload_pending(self, latest_signature=None):
+        self.pending_catalog_reload = True
+        self.pending_catalog_signature = latest_signature or self._safe_catalog_signature()
+
+    def _restore_row_from_database(self, row, pid):
+        product = self.product_service.get_product_by_id(pid)
+        if not product:
+            return
+
+        item = self.product_table.item(row, 0)
+        if item is not None:
+            item.setText(product["product_name"])
+
+        if self.invoice_type == "standard":
+            ref_widget = self.product_table.cellWidget(row, 1)
+            num_act_widget = self.product_table.cellWidget(row, 2)
+            physico_widget = self.product_table.cellWidget(row, 3)
+            toxico_widget = self.product_table.cellWidget(row, 4)
+            micro_widget = self.product_table.cellWidget(row, 5)
+            subtotal_widget = self.product_table.cellWidget(row, 6)
+            if ref_widget is not None:
+                self._set_line_edit_text(ref_widget, str(product["ref_b_analyse"] or 0))
+            if num_act_widget is not None:
+                self._set_line_edit_text(num_act_widget, self.selected_num_acts.get(pid) or "")
+        else:
+            physico_widget = self.product_table.cellWidget(row, 1)
+            toxico_widget = self.product_table.cellWidget(row, 2)
+            micro_widget = self.product_table.cellWidget(row, 3)
+            subtotal_widget = self.product_table.cellWidget(row, 4)
+
+        self._set_line_edit_text(physico_widget, self.format_number(product["physico"]))
+        self._set_line_edit_text(toxico_widget, self.format_number(product["toxico"]))
+        self._set_line_edit_text(micro_widget, self.format_number(product["micro"]))
+        self._set_line_edit_text(subtotal_widget, self.format_number(product["subtotal"]))
+
+    def _persist_row_changes(self, row, pid):
+        if self.invoice_type == "standard":
+            physico_col = 3
+            toxico_col = 4
+            micro_col = 5
+            subtotal_col = 6
+            num_act_widget = self.product_table.cellWidget(row, 2)
+            num_act = self._normalize_num_act(num_act_widget.text() if num_act_widget else "")
+            if self.selected_products.get(pid, False):
+                self.selected_num_acts[pid] = num_act
+            ref = int(self.parse_number(self.product_table.cellWidget(row, 1).text()))
+        else:
+            physico_col = 1
+            toxico_col = 2
+            micro_col = 3
+            subtotal_col = 4
+            ref = 0
+
+        physico_widget = self.product_table.cellWidget(row, physico_col)
+        toxico_widget = self.product_table.cellWidget(row, toxico_col)
+        micro_widget = self.product_table.cellWidget(row, micro_col)
+        subtotal_widget = self.product_table.cellWidget(row, subtotal_col)
+
+        physico = int(self.parse_number(physico_widget.text() if physico_widget else 0))
+        toxico = int(self.parse_number(toxico_widget.text() if toxico_widget else 0))
+        micro = int(self.parse_number(micro_widget.text() if micro_widget else 0))
+        subtotal = int(self.parse_number(subtotal_widget.text() if subtotal_widget else 0))
+
+        self.product_service.update_product(
+            pid,
+            ref,
+            None,
+            physico,
+            toxico,
+            micro,
+            subtotal,
+            update_ref=False,
+        )
+        self.catalog_signature = self._safe_catalog_signature()
+
+    def get_product_subtotal(self, product_id):
+        row = self._find_row_for_product(product_id)
+        if row < 0:
+            return None
+
+        subtotal_col = 6 if self.invoice_type == "standard" else 4
+        subtotal_widget = self.product_table.cellWidget(row, subtotal_col)
+        if subtotal_widget is None:
+            return None
+        return self.parse_number(subtotal_widget.text())
 
     def _begin_designation_edit(self, row):
         if self.product_table.cellWidget(row, 0) is not None:
@@ -406,9 +538,9 @@ class ProductManager(QWidget):
 
         if new_name != item.text().strip():
             self.product_table.removeCellWidget(row, 0)
+            item.setText(new_name)
             self.product_service.update_product_name(pid, new_name)
-            current_type_id = self.type_list.currentItem().data(Qt.UserRole) if self.type_list.currentItem() else None
-            self._after_local_catalog_change(selected_type_id=current_type_id)
+            self.catalog_signature = self._safe_catalog_signature()
             return True
 
         self.product_table.removeCellWidget(row, 0)
@@ -450,7 +582,7 @@ class ProductManager(QWidget):
             return True
 
         num_act = self._normalize_num_act(num_act_widget.text())
-        num_act_widget.setText(num_act or "")
+        self._set_line_edit_text(num_act_widget, num_act or "")
         return True
 
     def set_loaded_record_locked(self, locked):
@@ -496,9 +628,11 @@ class ProductManager(QWidget):
         self._after_local_catalog_change(selected_type_id=current_type_id)
 
     def on_price_component_changed(self, row):
+        item = self.product_table.item(row, 0)
+        if item is None:
+            return
+
         if self.invoice_type == "standard":
-            ref_col = 1
-            num_act_col = 2
             physico_col = 3
             toxico_col = 4
             micro_col = 5
@@ -521,26 +655,16 @@ class ProductManager(QWidget):
         subtotal_value = physico + toxico + micro
         subtotal_text = self.format_number(subtotal_value)
 
-        subtotal_widget.setText(subtotal_text)
+        self._set_line_edit_text(subtotal_widget, subtotal_text)
 
-        # Mise à jour immédiate dans la base et interface
-        pid = self.product_table.item(row, 0).data(Qt.UserRole)
+        pid = item.data(Qt.UserRole)
         if self.invoice_type == "standard":
-            ref = int(self.parse_number(self.product_table.cellWidget(row, 1).text()))
             num_act = self._normalize_num_act(self.product_table.cellWidget(row, 2).text())
             if self.selected_products.get(pid, False):
                 self.selected_num_acts[pid] = num_act
-        else:
-            ref = 0  # Not used for proforma
-            num_act = ""  # Not used for proforma
 
-        # Persist numeric components but DO NOT change ref here (ref is managed in-memory until save)
-        self.product_service.update_product(pid, ref, None,
-                       int(physico),
-                       int(toxico),
-                       int(micro),
-                       int(subtotal_value),
-                       update_ref=False)
+        if self.selected_products.get(pid, False):
+            self.selection_changed.emit()
 
     def toggle_select(self, pid, row):
         if self.loaded_record_locked:
@@ -783,15 +907,26 @@ class ProductManager(QWidget):
         if latest_signature == self.catalog_signature:
             return
 
+        if self._is_edit_active():
+            self._mark_catalog_reload_pending(latest_signature=latest_signature)
+            return
+
         self.catalog_signature = latest_signature
         self._reload_catalog_preserving_state()
-        self._show_catalog_notification("Le catalogue a été mis à jour automatiquement.")
+        self._show_catalog_notification("Le catalogue a ete mis a jour automatiquement.")
 
     def _after_local_catalog_change(self, selected_type_id=None):
+        if self._is_edit_active():
+            self._mark_catalog_reload_pending()
+            return
         self._reload_catalog_preserving_state(selected_type_id=selected_type_id)
         self.catalog_signature = self._safe_catalog_signature()
 
     def _reload_catalog_preserving_state(self, selected_type_id=None):
+        if self._is_edit_active():
+            self._mark_catalog_reload_pending()
+            return
+
         current_type_id = selected_type_id
         if current_type_id is None:
             current_item = self.type_list.currentItem()
@@ -824,22 +959,30 @@ class ProductManager(QWidget):
         btn_mod = self.product_table.cellWidget(row, btn_mod_col)
         if btn_mod:
             btn_mod.setText("Modifier")
+        designation_item = self.product_table.item(row, 0)
+        pid = designation_item.data(Qt.UserRole) if designation_item is not None else None
         if self.product_table.cellWidget(row, 0) is not None:
             self.product_table.removeCellWidget(row, 0)
-        for col in amount_cols:
-            w = self.product_table.cellWidget(row, col)
-            if w:
-                w.setText(self.format_number(w.text()))
+        if pid is not None:
+            self._restore_row_from_database(row, pid)
+        else:
+            for col in amount_cols:
+                w = self.product_table.cellWidget(row, col)
+                if w:
+                    self._set_line_edit_text(w, self.format_number(w.text()))
         for col in editable_cols:
             w = self.product_table.cellWidget(row, col)
             if w:
                 w.setReadOnly(True)
+        if self.active_edit_row == row:
+            self.active_edit_row = None
 
     def clear_selection(self):
         self.set_loaded_record_locked(False)
         # Annuler tout édit en cours avant de changer d'état
         for row in range(self.product_table.rowCount()):
             self._cancel_edit_if_active(row)
+        self._flush_pending_catalog_reload()
         # Réinitialiser l'état mémoire même si certaines lignes ne sont pas visibles
         self.selected_products.clear()
         self.selection_order.clear()
