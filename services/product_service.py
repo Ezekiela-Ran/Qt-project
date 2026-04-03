@@ -4,6 +4,9 @@ class ProductService:
     def __init__(self):
         self.db = DatabaseManager()
 
+    def get_all_product_types(self):
+        return self.db.get_all_product_types()
+
     def get_products_by_type(self, type_id):
         return self.db.get_products_by_type(type_id)
 

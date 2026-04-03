@@ -149,6 +149,16 @@ class DatabaseManager(Tables):
         finally:
             cursor.close()
 
+    def get_all_product_types(self):
+        cursor = self.conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT * FROM product_type ORDER BY product_type_name ASC, id ASC"
+            )
+            return cursor.fetchall()
+        finally:
+            cursor.close()
+
     def get_setting(self, key, default=None):
         cursor = self.conn.cursor()
         try:
@@ -571,7 +581,11 @@ class DatabaseManager(Tables):
             cursor.close()
 
     def get_products_by_type(self, type_id):
-        self.cursor.execute("SELECT id, product_name, ref_b_analyse, num_act, physico, toxico, micro, subtotal FROM products WHERE product_type_id=%s", (type_id,))
+        self.cursor.execute(
+            "SELECT id, product_name, ref_b_analyse, num_act, physico, toxico, micro, subtotal "
+            "FROM products WHERE product_type_id=%s ORDER BY product_name ASC, id ASC",
+            (type_id,),
+        )
         return self.cursor.fetchall()
     
     def add_product(self, type_id, product_name, ref="0", num_act=None, physico="0", toxico="0", micro="0", subtotal="0"):
@@ -876,6 +890,17 @@ class DatabaseManager(Tables):
                 ),
             )
             return self.cursor.lastrowid
+
+    def delete_certificate_entry(self, invoice_id, invoice_type, product_id, certificate_type):
+        with self.transaction():
+            self.cursor.execute(
+                "DELETE FROM certificate_entry WHERE invoice_id=%s AND invoice_type=%s AND product_id=%s AND certificate_type=%s",
+                (invoice_id, invoice_type, product_id, certificate_type),
+            )
+
+    def replace_certificate_entry_type(self, invoice_id, invoice_type, product_id, active_certificate_type):
+        opposite_type = "CNC" if active_certificate_type == "CC" else "CC"
+        self.delete_certificate_entry(invoice_id, invoice_type, product_id, opposite_type)
     
     def get_standard_invoice_by_id(self, invoice_id):
         self.cursor.execute("SELECT * FROM standard_invoice WHERE id=%s", (invoice_id,))

@@ -134,6 +134,14 @@ class InvoicePrinter:
             alignment=TA_CENTER,
             fontName='Helvetica-Bold'
         )
+        designation_style = ParagraphStyle(
+            name="DesignationCell",
+            parent=styles['Normal'],
+            fontSize=8,
+            leading=10,
+            alignment=TA_CENTER,
+            wordWrap='CJK',
+        )
         signature_note_style = ParagraphStyle(
             name="SignatureNote",
             parent=styles['Normal'],
@@ -229,7 +237,7 @@ class InvoicePrinter:
             for prod in products:
                 data_rows.append([
                     str(prod.get('ref_b_analyse', '') or ''),
-                    str(prod.get('product_name', '') or ''),
+                    Paragraph(escape(str(prod.get('product_name', '') or '')), designation_style),
                     str(prod.get('num_act', '') or ''),
                     str(prod.get('physico', '') or ''),
                     str(prod.get('micro', '') or ''),
@@ -252,7 +260,7 @@ class InvoicePrinter:
             data_rows = [header_row]
             for prod in products:
                 data_rows.append([
-                    str(prod.get('product_name', '') or ''),
+                    Paragraph(escape(str(prod.get('product_name', '') or '')), designation_style),
                     str(prod.get('physico', '') or ''),
                     str(prod.get('micro', '') or ''),
                     str(prod.get('toxico', '') or ''),
@@ -277,6 +285,7 @@ class InvoicePrinter:
             ('BACKGROUND', (0,0), (-1,0), colors.grey),
             ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
             ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
             ('FONTSIZE', (0,0), (-1,0), 9),
             ('BOTTOMPADDING', (0,0), (-1,0), 12),
@@ -284,6 +293,10 @@ class InvoicePrinter:
 
             ('FONTSIZE', (0,1), (-1,-1), 8),
             ('ALIGN', (0,1), (-1,-2), 'CENTER'),
+            ('LEFTPADDING', (0,1), (-1,-2), 4),
+            ('RIGHTPADDING', (0,1), (-1,-2), 4),
+            ('TOPPADDING', (0,1), (-1,-2), 6),
+            ('BOTTOMPADDING', (0,1), (-1,-2), 6),
 
             ('BACKGROUND', (0,-1), (-1,-1), colors.beige),
 

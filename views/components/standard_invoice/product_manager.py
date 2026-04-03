@@ -131,8 +131,7 @@ class ProductManager(QWidget):
 
         self.type_list.blockSignals(True)
         self.type_list.clear()
-        self.product_service.db.table_name = "product_type"
-        types = self.product_service.db.fetch_all()
+        types = self.product_service.get_all_product_types()
         if not types:
             item = QListWidgetItem("Aucune catégorie disponible")
             item.setFlags(item.flags() & ~Qt.ItemIsSelectable)

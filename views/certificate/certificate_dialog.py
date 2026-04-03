@@ -18,23 +18,25 @@ from utils.path_utils import resolve_resource_path
 # Indices de colonnes
 # ------------------------------------------------------------------
 _COL_DESIGNATION    = 0
-_COL_QTE            = 1
-_COL_QTE_ANALYSEE   = 2
-_COL_NUM_LOT        = 3
-_COL_NUM_ACTE       = 4
-_COL_CLASSE         = 5
-_COL_DATE_PROD      = 6
-_COL_DATE_PEREMP    = 7
-_COL_NUM_PRELEV     = 8
-_COL_DATE_PV        = 9
-_COL_DATE_CERT      = 10
-_COL_CC             = 11
-_COL_CNC            = 12
+_COL_CC             = 1
+_COL_CNC            = 2
+_COL_QTE            = 3
+_COL_QTE_ANALYSEE   = 4
+_COL_NUM_LOT        = 5
+_COL_NUM_ACTE       = 6
+_COL_CLASSE         = 7
+_COL_DATE_PROD      = 8
+_COL_DATE_PEREMP    = 9
+_COL_NUM_PRELEV     = 10
+_COL_DATE_PV        = 11
+_COL_DATE_CERT      = 12
 _COL_ACTIONS        = 13
 _COL_COUNT          = 14
 
 _HEADERS = [
     "Désignation",
+    "CC",
+    "CNC",
     "Quantité *",
     "Qté Analysée *",
     "N° Lot *",
@@ -45,8 +47,6 @@ _HEADERS = [
     "N° PRL",
     "Date commerce",
     "Date cert *",
-    "CC",
-    "CNC",
     "Actions",
 ]
 
@@ -311,6 +311,7 @@ class CertificateDialog(QDialog):
             "btn_save":         btn_save,
             "btn_print":        btn_print,
             "ref_b_analyse":    base_defaults.get("ref_b_analyse"),
+            "base_defaults":    dict(base_defaults),
             "cached_entries":   {
                 "CC": self._entry_to_payload(saved_entries.get("CC"), base_defaults),
                 "CNC": self._entry_to_payload(saved_entries.get("CNC"), base_defaults),
@@ -343,10 +344,10 @@ class CertificateDialog(QDialog):
         date_pv_edit.cleared.connect(lambda r=row_index: self._on_row_data_changed(r))
         date_cert_edit.cleared.connect(lambda r=row_index: self._on_row_data_changed(r))
 
-        if saved_entries.get("CC"):
-            actual_cc.setChecked(True)
-        elif saved_entries.get("CNC"):
+        if saved_entries.get("CNC"):
             actual_cnc.setChecked(True)
+        elif saved_entries.get("CC"):
+            actual_cc.setChecked(True)
         else:
             self._set_row_action_state(row_data)
 
@@ -542,13 +543,21 @@ class CertificateDialog(QDialog):
             current_type,
             payload,
         )
+        self.db_manager.replace_certificate_entry_type(
+            self.invoice_id,
+            self.invoice_type,
+            row["pid"],
+            current_type,
+        )
+
+    def _reset_certificate_cache(self, row: dict, cert_type: str):
+        row["cached_entries"][cert_type] = self._default_entry_to_payload(row.get("base_defaults"))
 
     def _on_certificate_type_selected(self, row_index: int, cert_type: str):
         row = self._rows[row_index]
         previous_type = row.get("active_cert_type")
         if previous_type and previous_type != cert_type:
-            row["cached_entries"][previous_type] = self._snapshot_row_values(row)
-            self._persist_row_state(row, previous_type)
+            self._reset_certificate_cache(row, previous_type)
 
         row["active_cert_type"] = cert_type
         payload = row["cached_entries"].get(cert_type) or self._default_entry_to_payload({"num_act": row["num_acte_edit"].text().strip()})
