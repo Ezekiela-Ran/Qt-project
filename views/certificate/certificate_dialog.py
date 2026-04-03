@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QPushButton, QCheckBox, QWidget, QAbstractItemView, QLabel, QHeaderView,
     QMessageBox, QLineEdit, QDateEdit,
 )
-from PySide6.QtCore import Qt, QDate, Signal
+from PySide6.QtCore import Qt, QDate, QSignalBlocker, QTimer, Signal
 
 from views.certificate.certificate_printer import CertificatePrinter
 from utils.path_utils import resolve_resource_path
@@ -32,6 +32,8 @@ _COL_DATE_PV        = 11
 _COL_DATE_CERT      = 12
 _COL_ACTIONS        = 13
 _COL_COUNT          = 14
+
+CERTIFICATE_REFRESH_INTERVAL_MS = 5000
 
 _HEADERS = [
     "Désignation",
@@ -112,12 +114,16 @@ class CertificateDialog(QDialog):
         self.product_manager = product_manager
         self._rows: list[dict] = []
         self._printer = CertificatePrinter(self)
+        self._refresh_pending = False
+        self._is_refreshing = False
+        self._last_entries_signature: tuple = ()
 
         self.setWindowTitle("Certificats — CC / CNC")
         self.setModal(True)
 
         self._build_ui()
         self._load_products()
+        self._init_refresh_timer()
         self._apply_screen_geometry()
 
     # ------------------------------------------------------------------
@@ -200,16 +206,15 @@ class CertificateDialog(QDialog):
             target_height,
         )
 
-    def _load_products(self):
-        invoice_item_map = {}
-        if self.invoice_id:
-            for entry in self.db_manager.get_invoice_items_with_refs(self.invoice_id, self.invoice_type):
-                invoice_item_map[entry["product_id"]] = entry
+    def _init_refresh_timer(self):
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.setInterval(CERTIFICATE_REFRESH_INTERVAL_MS)
+        self.refresh_timer.timeout.connect(self.refresh_certificate_entries_silently)
+        self.refresh_timer.start()
 
-        saved_entries = {}
-        if self.invoice_id:
-            for entry in self.db_manager.get_certificate_entries(self.invoice_id, self.invoice_type, self.selected_products):
-                saved_entries.setdefault(entry["product_id"], {})[entry["certificate_type"]] = entry
+    def _load_products(self):
+        invoice_item_map, saved_entries = self._fetch_certificate_source_data()
+        self._last_entries_signature = self._build_entries_signature(saved_entries)
 
         self._table.setRowCount(len(self.selected_products))
         for i, pid in enumerate(self.selected_products):
@@ -229,6 +234,20 @@ class CertificateDialog(QDialog):
                 },
                 saved_entries.get(pid, {}),
             )
+
+    def _fetch_certificate_source_data(self):
+        invoice_item_map = {}
+        saved_entries = {}
+        if not self.invoice_id:
+            return invoice_item_map, saved_entries
+
+        for entry in self.db_manager.get_invoice_items_with_refs(self.invoice_id, self.invoice_type):
+            invoice_item_map[entry["product_id"]] = entry
+
+        for entry in self.db_manager.get_certificate_entries(self.invoice_id, self.invoice_type, self.selected_products):
+            saved_entries.setdefault(entry["product_id"], {})[entry["certificate_type"]] = entry
+
+        return invoice_item_map, saved_entries
 
     def _add_row(self, row_index: int, pid, name: str, base_defaults: dict | None = None, saved_entries: dict | None = None):
         """Ajoute une ligne avec champs de saisie et choix CC / CNC."""
@@ -447,6 +466,26 @@ class CertificateDialog(QDialog):
         }
 
     @staticmethod
+    def _payload_signature(payload: dict | None) -> tuple:
+        payload = payload or {}
+        return tuple(sorted(payload.items()))
+
+    @classmethod
+    def _build_entries_signature(cls, saved_entries: dict) -> tuple:
+        signature = []
+        for pid in sorted(saved_entries):
+            entries = saved_entries[pid]
+            for cert_type in sorted(entries):
+                signature.append(
+                    (
+                        pid,
+                        cert_type,
+                        cls._payload_signature(cls._entry_to_payload(entries.get(cert_type))),
+                    )
+                )
+        return tuple(signature)
+
+    @staticmethod
     def _parse_date_value(value: str) -> QDate:
         parsed = QDate.fromString(str(value or "").strip(), "dd/MM/yyyy")
         return parsed if parsed.isValid() else QDate.currentDate()
@@ -506,6 +545,93 @@ class CertificateDialog(QDialog):
         finally:
             row["loading"] = False
 
+    def _row_has_focus(self, row: dict) -> bool:
+        widgets = (
+            row["qty_edit"],
+            row["qty_analysee_edit"],
+            row["num_lot_edit"],
+            row["num_acte_edit"],
+            row["classe_edit"],
+            row["date_prod_edit"],
+            row["date_peremp_edit"],
+            row["num_prelev_edit"],
+            row["date_pv_edit"],
+            row["date_cert_edit"],
+            row["cc_cb"],
+            row["cnc_cb"],
+        )
+        return any(widget.hasFocus() for widget in widgets)
+
+    def _row_is_being_edited(self, row: dict) -> bool:
+        return bool(row.get("loading")) or self._row_has_focus(row)
+
+    def _apply_remote_entry_to_row(self, row: dict, cert_type: str, payload: dict):
+        row["cached_entries"][cert_type] = payload
+        if row.get("active_cert_type") != cert_type:
+            return
+        self._load_row_values(row, payload)
+        self._set_row_action_state(row)
+
+    def _apply_remote_checkbox_state(self, row: dict, saved_entry_by_type: dict):
+        target_type = None
+        if saved_entry_by_type.get("CNC"):
+            target_type = "CNC"
+        elif saved_entry_by_type.get("CC"):
+            target_type = "CC"
+
+        if target_type == row.get("active_cert_type"):
+            return
+
+        blockers = [QSignalBlocker(row["cc_cb"]), QSignalBlocker(row["cnc_cb"])]
+        try:
+            row["cc_cb"].setChecked(target_type == "CC")
+            row["cnc_cb"].setChecked(target_type == "CNC")
+        finally:
+            del blockers
+
+        row["active_cert_type"] = target_type
+        if target_type is not None:
+            self._load_row_values(row, row["cached_entries"].get(target_type) or self._default_entry_to_payload(row.get("base_defaults")))
+        self._set_row_action_state(row)
+
+    def _refresh_row_from_remote(self, row: dict, saved_entry_by_type: dict):
+        for cert_type in ("CC", "CNC"):
+            remote_entry = saved_entry_by_type.get(cert_type)
+            if remote_entry:
+                payload = self._entry_to_payload(remote_entry, row.get("base_defaults"))
+            elif row.get("active_cert_type") == cert_type:
+                payload = self._default_entry_to_payload(row.get("base_defaults"))
+            else:
+                payload = self._default_entry_to_payload(row.get("base_defaults"))
+            self._apply_remote_entry_to_row(row, cert_type, payload)
+        self._apply_remote_checkbox_state(row, saved_entry_by_type)
+
+    def refresh_certificate_entries_silently(self):
+        if not self.invoice_id or not self.isVisible() or self._is_refreshing:
+            return
+
+        try:
+            _invoice_item_map, saved_entries = self._fetch_certificate_source_data()
+        except Exception:
+            return
+
+        latest_signature = self._build_entries_signature(saved_entries)
+        if latest_signature == self._last_entries_signature:
+            return
+
+        if any(self._row_is_being_edited(row) for row in self._rows):
+            self._refresh_pending = True
+            return
+
+        self._is_refreshing = True
+        try:
+            for row in self._rows:
+                self._refresh_row_from_remote(row, saved_entries.get(row["pid"], {}))
+            self._last_entries_signature = latest_signature
+            self._refresh_pending = False
+        finally:
+            self._is_refreshing = False
+
     def _snapshot_row_values(self, row: dict, cert_type: str | None = None) -> dict:
         current_type = cert_type or row.get("active_cert_type")
         current_payload = row["cached_entries"].get(current_type, {}) if current_type else {}
@@ -549,6 +675,7 @@ class CertificateDialog(QDialog):
             row["pid"],
             current_type,
         )
+        self._last_entries_signature = ()
 
     def _reset_certificate_cache(self, row: dict, cert_type: str):
         row["cached_entries"][cert_type] = self._default_entry_to_payload(row.get("base_defaults"))
@@ -578,6 +705,8 @@ class CertificateDialog(QDialog):
         row["cached_entries"][cert_type] = self._snapshot_row_values(row, cert_type)
         self._persist_row_state(row, cert_type)
         self._set_row_action_state(row)
+        if self._refresh_pending:
+            self.refresh_certificate_entries_silently()
 
     def _set_row_action_state(self, row: dict):
         cert_type = row.get("active_cert_type")
@@ -781,6 +910,11 @@ class CertificateDialog(QDialog):
             self.form,
             [(row["pid"], row["name"], cert_type, self._row_extras(row_index))],
         )
+
+    def closeEvent(self, event):
+        if hasattr(self, "refresh_timer"):
+            self.refresh_timer.stop()
+        super().closeEvent(event)
 
 
 # ------------------------------------------------------------------

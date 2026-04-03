@@ -14,7 +14,11 @@ class StandardInvoiceRecord(QtWidgets.QWidget):
         self.setObjectName("card")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
-        self.list_record = ListRecordTemplate(self.standardinvoice.headers, self.standardinvoice.data)
+        self.list_record = ListRecordTemplate(
+            self.standardinvoice.headers,
+            self.standardinvoice.data,
+            searchable_columns=[0, 1],
+        )
         self.list_record.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
