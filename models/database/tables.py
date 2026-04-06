@@ -1,58 +1,27 @@
 from contextlib import contextmanager
 from pathlib import Path
 
-from models.database.db_config import MYSQL_CONNECT_TIMEOUT_SECONDS, get_database_settings
+from models.database.db_config import CLIENT_DEPLOYMENT_ROLE, get_database_settings
 from models.database.sqlite_backend import connect as connect_sqlite
-
-try:
-    import mysql.connector
-except Exception:
-    mysql = None
 
 class Tables:
     def __init__(self):
         self.settings = get_database_settings()
         self.backend = self.settings['engine']
-        self.database_name = self.settings['mysql']['database']
+        self.database_name = Path(self.settings['sqlite_path']).name
         self._transaction_depth = 0
-        if self.backend == "mysql":
-            if mysql is None:
-                raise RuntimeError("mysql-connector-python n'est pas disponible.")
-            try:
-                self.conn = mysql.connector.connect(
-                    host=self.settings['mysql']['host'],
-                    port=self.settings['mysql']['port'],
-                    user=self.settings['mysql']['user'],
-                    password=self.settings['mysql']['password'],
-                    connection_timeout=MYSQL_CONNECT_TIMEOUT_SECONDS,
-                )
-            except Exception as exc:
-                raise RuntimeError(
-                    "Connexion MySQL impossible vers "
-                    f"{self.settings['mysql']['host']}:{self.settings['mysql']['port']} "
-                    f"pour la base {self.database_name}. Verifiez que le serveur MySQL est demarre "
-                    "et que l'adresse configuree est correcte."
-                ) from exc
-            self.conn.autocommit = True
-        else:
-            self.conn = connect_sqlite(Path(self.settings['sqlite_path']))
+        create_if_missing = self.settings.get('deployment_role') != CLIENT_DEPLOYMENT_ROLE
+        try:
+            self.conn = connect_sqlite(Path(self.settings['sqlite_path']), create_if_missing=create_if_missing)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "Base SQLite partagée introuvable. Vérifiez le chemin réseau configuré et le partage Windows du poste hôte."
+            ) from exc
         self.cursor = self.conn.cursor(dictionary=True)
-        if self.is_mysql:
-            try:
-                self.cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{self.database_name}`")
-                self.cursor.execute(f"USE `{self.database_name}`")
-                self.cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            except Exception as exc:
-                self.cursor.close()
-                self.conn.close()
-                raise RuntimeError(
-                    f"Initialisation MySQL impossible pour la base {self.database_name}. "
-                    "Verifiez les droits du compte MySQL et l'etat du serveur."
-                ) from exc
 
     @property
     def is_mysql(self) -> bool:
-        return self.backend == "mysql"
+        return False
 
     @property
     def is_sqlite(self) -> bool:
@@ -200,6 +169,8 @@ class Tables:
             CREATE TABLE IF NOT EXISTS products (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 product_name VARCHAR(255) NOT NULL,
+                default_quantity INT NOT NULL DEFAULT 1,
+                analysis_duration_days INT NOT NULL DEFAULT 0,
                 ref_b_analyse INT NOT NULL,
                 num_act VARCHAR(191),
                 physico INT,
@@ -219,6 +190,8 @@ class Tables:
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_name TEXT NOT NULL,
+            default_quantity INTEGER NOT NULL DEFAULT 1,
+            analysis_duration_days INTEGER NOT NULL DEFAULT 0,
             ref_b_analyse INTEGER NOT NULL,
             num_act TEXT,
             physico INTEGER,
@@ -241,6 +214,7 @@ class Tables:
                 product_id INT NOT NULL,
                 ref_b_analyse INT NULL,
                 num_act VARCHAR(255) NULL,
+                result_date VARCHAR(32) NULL,
                 quantity INT DEFAULT 1,
                 physico DECIMAL(10,2) DEFAULT 0,
                 micro DECIMAL(10,2) DEFAULT 0,
@@ -260,6 +234,7 @@ class Tables:
             product_id INTEGER NOT NULL,
             ref_b_analyse INTEGER NULL,
             num_act TEXT NULL,
+            result_date TEXT NULL,
             quantity INTEGER DEFAULT 1,
             physico REAL DEFAULT 0,
             micro REAL DEFAULT 0,
@@ -278,6 +253,7 @@ class Tables:
                 invoice_id INT NOT NULL,
                 invoice_type ENUM('standard', 'proforma') NOT NULL,
                 product_id INT NOT NULL,
+                invoice_item_id INT NULL,
                 certificate_type ENUM('CC', 'CNC') NOT NULL,
                 quantity VARCHAR(255),
                 quantity_analysee VARCHAR(255),
@@ -292,8 +268,11 @@ class Tables:
                 num_prl VARCHAR(255),
                 date_commerce VARCHAR(32),
                 date_commerce_modified TINYINT(1) NULL,
+                date_cert VARCHAR(32),
+                date_cert_modified TINYINT(1) NULL,
+                printed_at VARCHAR(32) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE KEY uk_certificate_entry_scope (invoice_id, invoice_type, product_id, certificate_type),
+                UNIQUE KEY uk_certificate_entry_scope (invoice_id, invoice_type, invoice_item_id, certificate_type),
                 FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
             )
             """)
@@ -305,6 +284,7 @@ class Tables:
             invoice_id INTEGER NOT NULL,
             invoice_type TEXT NOT NULL CHECK (invoice_type IN ('standard', 'proforma')),
             product_id INTEGER NOT NULL,
+            invoice_item_id INTEGER NULL,
             certificate_type TEXT NOT NULL CHECK (certificate_type IN ('CC', 'CNC')),
             quantity TEXT,
             quantity_analysee TEXT,
@@ -313,18 +293,21 @@ class Tables:
             num_cert TEXT,
             classe TEXT,
             date_production TEXT,
+            printed_at TEXT NULL,
             date_production_modified INTEGER,
             date_peremption TEXT,
             date_peremption_modified INTEGER,
             num_prl TEXT,
             date_commerce TEXT,
             date_commerce_modified INTEGER,
+            date_cert TEXT,
+            date_cert_modified INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
         )
         """)
         self.cursor.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uk_certificate_entry_scope ON certificate_entry(invoice_id, invoice_type, product_id, certificate_type)"
+            "CREATE UNIQUE INDEX IF NOT EXISTS uk_certificate_entry_scope ON certificate_entry(invoice_id, invoice_type, invoice_item_id, certificate_type)"
         )
 
     def app_settings_table(self):

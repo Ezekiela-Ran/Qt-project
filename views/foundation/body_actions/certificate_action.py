@@ -1,9 +1,4 @@
-"""
-Action déclenchée par le bouton Certificat dans BodyLayout.
-
-Vérifie qu'au moins un produit est sélectionné, récupère le formulaire client,
-puis ouvre le dialogue de sélection CC / CNC.
-"""
+"""Action déclenchée par le bouton Certificat dans BodyLayout."""
 from PySide6.QtWidgets import QMessageBox
 
 from views.foundation.globals import GlobalVariable
@@ -12,48 +7,15 @@ from views.foundation.globals import GlobalVariable
 class CertificateAction:
     @staticmethod
     def execute(body_layout):
-        if not body_layout.current_invoice_id:
+        if GlobalVariable.invoice_type != "standard":
             QMessageBox.warning(
                 body_layout,
                 "Certificat",
-                "Veuillez selectionner un enregistrement",
+                "Les certificats multi-factures sont disponibles uniquement pour les factures standard.",
             )
             return
 
-        main_layout = body_layout.parent()
-        if not hasattr(main_layout, "head_layout") or not hasattr(main_layout.head_layout, "form"):
-            QMessageBox.warning(
-                body_layout,
-                "Certificat",
-                "Impossible d'accéder au formulaire client.",
-            )
-            return
+        from views.certificate.work_queue_dialog import CertificateWorkQueueDialog
 
-        selected_products = [
-            pid
-            for pid, selected in body_layout.product_manager.selected_products.items()
-            if selected
-        ]
-        if not selected_products:
-            QMessageBox.warning(
-                body_layout,
-                "Certificat",
-                "Aucun produit sélectionné. Veuillez sélectionner au moins un produit.",
-            )
-            return
-
-        form = main_layout.head_layout.form
-
-        # Import différé pour éviter les dépendances circulaires
-        from views.certificate.certificate_dialog import CertificateDialog
-
-        dlg = CertificateDialog(
-            body_layout,
-            form,
-            selected_products,
-            body_layout.db_manager,
-            invoice_id=body_layout.current_invoice_id,
-            invoice_type=GlobalVariable.invoice_type,
-            product_manager=body_layout.product_manager,
-        )
+        dlg = CertificateWorkQueueDialog(body_layout, body_layout.db_manager)
         dlg.exec()

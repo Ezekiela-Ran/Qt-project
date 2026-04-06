@@ -4,45 +4,32 @@ import shutil
 import socket
 from pathlib import Path
 
-from utils.path_utils import get_app_data_dir
-
-try:
-    import mysql.connector
-except Exception:
-    mysql = None
-
 from models.database.sqlite_backend import connect as connect_sqlite
+from utils.path_utils import get_app_data_dir, get_public_documents_dir
 
 
-DEFAULT_DB_NAME = 'invoicing'
 DEFAULT_DB_ENGINE = 'sqlite'
-DEFAULT_DB_HOST = '127.0.0.1'
-DEFAULT_DB_PORT = 3306
-DEFAULT_DB_USER = 'lfca_app'
-DEFAULT_DB_PASSWORD = 'lfca_app'
-APP_DATA_DIR_NAME = 'FaC'
-LEGACY_APP_DATA_DIR_NAME = 'LFCA'
-APP_DB_CONFIG_ENV = 'FAC_DB_CONFIG'
-LEGACY_APP_DB_CONFIG_ENV = 'LFCA_DB_CONFIG'
-DEFAULT_SQLITE_FILENAME = 'fac.db'
-LEGACY_SQLITE_FILENAME = 'lfca.db'
-MYSQL_CONNECT_TIMEOUT_SECONDS = 5
+DEFAULT_DEPLOYMENT_ROLE = ''
+HOST_DEPLOYMENT_ROLE = 'host'
+CLIENT_DEPLOYMENT_ROLE = 'client'
+APP_DATA_DIR_NAME = 'FacCP'
+LEGACY_APP_DATA_DIR_NAMES = ('FaC', 'LFCA')
+APP_DB_CONFIG_ENV = 'FACCP_DB_CONFIG'
+LEGACY_APP_DB_CONFIG_ENVS = ('FAC_DB_CONFIG', 'LFCA_DB_CONFIG')
+DEFAULT_SQLITE_FILENAME = 'faccp.db'
+LEGACY_SQLITE_FILENAMES = ('fac.db', 'lfca.db')
+DEFAULT_SHARED_FOLDER_NAME = 'FacCP'
 
 
 def build_default_database_config() -> dict:
     return {
         'engine': DEFAULT_DB_ENGINE,
-        'sqlite_path': _default_sqlite_path(),
-        'deployment_role': 'client',
-        'setup_completed': True,
-        'server_host_hint': '',
-        'mysql': {
-            'host': DEFAULT_DB_HOST,
-            'port': DEFAULT_DB_PORT,
-            'user': DEFAULT_DB_USER,
-            'password': DEFAULT_DB_PASSWORD,
-            'database': DEFAULT_DB_NAME,
-        },
+        'deployment_role': DEFAULT_DEPLOYMENT_ROLE,
+        'setup_completed': False,
+        'sqlite_path': _default_host_database_path(),
+        'shared_database_path': '',
+        'host_display_name': '',
+        'host_ip_hint': '',
     }
 
 
@@ -50,57 +37,74 @@ def _primary_config_path() -> Path:
     return get_app_data_dir(APP_DATA_DIR_NAME) / 'database.json'
 
 
-def _legacy_config_path() -> Path:
-    return get_app_data_dir(LEGACY_APP_DATA_DIR_NAME) / 'database.json'
+def _legacy_config_paths() -> list[Path]:
+    return [get_app_data_dir(app_name) / 'database.json' for app_name in LEGACY_APP_DATA_DIR_NAMES]
 
 
-def _default_sqlite_path_obj() -> Path:
-    return get_app_data_dir(APP_DATA_DIR_NAME) / DEFAULT_SQLITE_FILENAME
+def _default_host_database_path_obj() -> Path:
+    return get_public_documents_dir(DEFAULT_SHARED_FOLDER_NAME) / DEFAULT_SQLITE_FILENAME
 
 
-def _legacy_sqlite_path_obj() -> Path:
-    return get_app_data_dir(LEGACY_APP_DATA_DIR_NAME) / LEGACY_SQLITE_FILENAME
+def _legacy_sqlite_path_candidates() -> list[Path]:
+    candidates = []
+    for app_name in LEGACY_APP_DATA_DIR_NAMES:
+        for filename in LEGACY_SQLITE_FILENAMES:
+            candidates.append(get_app_data_dir(app_name) / filename)
+    return candidates
+
+
+def _find_first_existing_path(candidates: list[Path]) -> Path | None:
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _migrate_legacy_sqlite_database(target_path: Path):
-    legacy_path = _legacy_sqlite_path_obj()
-    if target_path.exists() or not legacy_path.exists():
+    if target_path.exists():
         return
+
+    legacy_path = _find_first_existing_path(_legacy_sqlite_path_candidates())
+    if legacy_path is None:
+        return
+
     target_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(legacy_path, target_path)
 
 
 def _config_file_candidates() -> list[Path]:
     candidates = []
-    for env_key in (APP_DB_CONFIG_ENV, LEGACY_APP_DB_CONFIG_ENV):
+    for env_key in (APP_DB_CONFIG_ENV, *LEGACY_APP_DB_CONFIG_ENVS):
         custom_path = os.getenv(env_key, '').strip()
         if custom_path:
             candidates.append(Path(os.path.expandvars(custom_path)).expanduser())
+    candidates.extend(_legacy_config_paths())
     candidates.append(_primary_config_path())
-    candidates.append(_legacy_config_path())
     candidates.append(Path.cwd() / 'database.json')
     return candidates
 
 
-def _default_sqlite_path() -> str:
-    target_path = _default_sqlite_path_obj()
+def _default_host_database_path() -> str:
+    target_path = _default_host_database_path_obj()
     _migrate_legacy_sqlite_database(target_path)
     return str(target_path)
 
 
-def _normalize_sqlite_path(value: str) -> str:
+def _normalize_sqlite_path(value: str, *, fallback_to_default: bool) -> str:
     raw_path = os.path.expandvars(str(value or '')).strip()
-    target_path = _default_sqlite_path_obj()
-    legacy_path = _legacy_sqlite_path_obj()
+    target_path = _default_host_database_path_obj()
 
     if not raw_path:
-        _migrate_legacy_sqlite_database(target_path)
-        return str(target_path)
+        if fallback_to_default:
+            _migrate_legacy_sqlite_database(target_path)
+            return str(target_path)
+        return ''
 
     normalized_path = Path(raw_path).expanduser()
-    if normalized_path == legacy_path:
-        _migrate_legacy_sqlite_database(target_path)
-        return str(target_path)
+    for legacy_path in _legacy_sqlite_path_candidates():
+        if normalized_path == legacy_path:
+            _migrate_legacy_sqlite_database(target_path)
+            return str(target_path)
 
     if normalized_path == target_path:
         _migrate_legacy_sqlite_database(target_path)
@@ -113,45 +117,53 @@ def _write_default_config_template(config_path: Path):
     if config_path.exists():
         return
 
-    config_path.write_text(
-        json.dumps(build_default_database_config(), indent=2),
-        encoding='utf-8',
-    )
+    config_path.write_text(json.dumps(build_default_database_config(), indent=2), encoding='utf-8')
 
 
-def _normalize_engine(value) -> str:
-    engine = str(value or DEFAULT_DB_ENGINE).strip().lower()
-    return engine if engine in {'sqlite', 'mysql'} else DEFAULT_DB_ENGINE
+def _normalize_role(value) -> str:
+    role = str(value or '').strip().lower()
+    if role == 'server':
+        return HOST_DEPLOYMENT_ROLE
+    if role in {HOST_DEPLOYMENT_ROLE, CLIENT_DEPLOYMENT_ROLE}:
+        return role
+    return DEFAULT_DEPLOYMENT_ROLE
 
 
 def normalize_database_config(raw_config: dict | None) -> dict:
     defaults = build_default_database_config()
     raw_config = raw_config if isinstance(raw_config, dict) else {}
-    mysql_config = raw_config.get('mysql') if isinstance(raw_config.get('mysql'), dict) else {}
-    inferred_setup_completed = bool(
-        raw_config.get('setup_completed')
-        or str(raw_config.get('server_host_hint') or '').strip()
-        or (
-            isinstance(mysql_config, dict)
-            and str(mysql_config.get('host') or '').strip()
-            and str(mysql_config.get('host') or '').strip() != DEFAULT_DB_HOST
-        )
-        or str(raw_config.get('deployment_role') or '').strip().lower() == 'server'
-    )
+
+    legacy_mysql_configured = str(raw_config.get('engine') or '').strip().lower() == 'mysql' or isinstance(raw_config.get('mysql'), dict)
+    role = _normalize_role(raw_config.get('deployment_role'))
+    raw_sqlite_path = raw_config.get('sqlite_path')
+    raw_shared_path = raw_config.get('shared_database_path')
+    explicit_setup = bool(raw_config.get('setup_completed'))
+
+    if role == DEFAULT_DEPLOYMENT_ROLE and not legacy_mysql_configured and explicit_setup and raw_sqlite_path:
+        role = HOST_DEPLOYMENT_ROLE
+        explicit_setup = True
+
+    if role == HOST_DEPLOYMENT_ROLE:
+        sqlite_path = _normalize_sqlite_path(raw_sqlite_path or defaults['sqlite_path'], fallback_to_default=True)
+        shared_database_path = _normalize_sqlite_path(raw_shared_path or sqlite_path, fallback_to_default=False)
+        setup_completed = explicit_setup and bool(sqlite_path)
+    elif role == CLIENT_DEPLOYMENT_ROLE:
+        sqlite_path = _normalize_sqlite_path(raw_shared_path or raw_sqlite_path, fallback_to_default=False)
+        shared_database_path = sqlite_path
+        setup_completed = explicit_setup and bool(sqlite_path)
+    else:
+        sqlite_path = _normalize_sqlite_path(raw_sqlite_path or defaults['sqlite_path'], fallback_to_default=True)
+        shared_database_path = ''
+        setup_completed = False
 
     return {
-        'engine': _normalize_engine(raw_config.get('engine')),
-        'sqlite_path': _normalize_sqlite_path(raw_config.get('sqlite_path') or defaults['sqlite_path']),
-        'deployment_role': str(raw_config.get('deployment_role') or defaults.get('deployment_role') or 'client').strip().lower() or 'client',
-        'setup_completed': inferred_setup_completed,
-        'server_host_hint': str(raw_config.get('server_host_hint') or defaults.get('server_host_hint') or '').strip(),
-        'mysql': {
-            'host': str(mysql_config.get('host') or defaults['mysql']['host']).strip() or DEFAULT_DB_HOST,
-            'port': _coerce_port(mysql_config.get('port'), DEFAULT_DB_PORT),
-            'user': str(mysql_config.get('user') or defaults['mysql']['user']).strip(),
-            'password': str(mysql_config.get('password') or defaults['mysql']['password']),
-            'database': str(mysql_config.get('database') or defaults['mysql']['database']).strip() or DEFAULT_DB_NAME,
-        },
+        'engine': DEFAULT_DB_ENGINE,
+        'deployment_role': role,
+        'setup_completed': setup_completed and not legacy_mysql_configured,
+        'sqlite_path': sqlite_path,
+        'shared_database_path': shared_database_path,
+        'host_display_name': str(raw_config.get('host_display_name') or '').strip(),
+        'host_ip_hint': str(raw_config.get('host_ip_hint') or '').strip(),
     }
 
 
@@ -159,21 +171,22 @@ def _load_file_config() -> tuple[dict, Path]:
     candidates = _config_file_candidates()
     primary_path = _primary_config_path()
 
-    if not primary_path.exists():
-        legacy_path = _legacy_config_path()
-        if legacy_path.exists():
-            try:
-                loaded = json.loads(legacy_path.read_text(encoding='utf-8'))
-            except (json.JSONDecodeError, OSError):
-                loaded = None
-            if isinstance(loaded, dict):
-                normalized = normalize_database_config(loaded)
-                save_database_config(normalized, primary_path)
-                return normalized, primary_path
-
     _write_default_config_template(primary_path)
 
+    primary_normalized = build_default_database_config()
+    if primary_path.exists():
+        try:
+            loaded_primary = json.loads(primary_path.read_text(encoding='utf-8'))
+        except (json.JSONDecodeError, OSError):
+            loaded_primary = None
+        if isinstance(loaded_primary, dict):
+            primary_normalized = normalize_database_config(loaded_primary)
+            if primary_normalized.get('setup_completed'):
+                return primary_normalized, primary_path
+
     for candidate in candidates:
+        if candidate == primary_path:
+            continue
         if not candidate.exists():
             continue
         try:
@@ -182,11 +195,11 @@ def _load_file_config() -> tuple[dict, Path]:
             continue
         if isinstance(loaded, dict):
             normalized = normalize_database_config(loaded)
-            if candidate != primary_path and not primary_path.exists():
+            if normalized.get('setup_completed'):
                 save_database_config(normalized, primary_path)
                 return normalized, primary_path
-            return normalized, candidate
-    return build_default_database_config(), primary_path
+
+    return primary_normalized, primary_path
 
 
 def _pick_setting(env_key: str, file_value, default_value):
@@ -198,51 +211,31 @@ def _pick_setting(env_key: str, file_value, default_value):
     return default_value
 
 
-def _expand_path(value: str) -> str:
-    return os.path.expandvars(str(value or '')).strip()
-
-
-def _coerce_port(value, default_value: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return int(default_value)
-
-
-def _get_port() -> int:
-    file_config, _ = _load_file_config()
-    raw_port = _pick_setting('DB_PORT', file_config['mysql'].get('port'), DEFAULT_DB_PORT)
-    return _coerce_port(raw_port, DEFAULT_DB_PORT)
-
-
 def get_database_settings() -> dict:
     file_config, config_file = _load_file_config()
-    mysql_file_config = file_config['mysql']
-    engine = _normalize_engine(_pick_setting('DB_ENGINE', file_config.get('engine'), DEFAULT_DB_ENGINE))
-    database_name = str(_pick_setting('DB_NAME', mysql_file_config.get('database'), DEFAULT_DB_NAME)).strip() or DEFAULT_DB_NAME
-    sqlite_path = _normalize_sqlite_path(_pick_setting('DB_PATH', file_config.get('sqlite_path'), _default_sqlite_path()))
+    sqlite_path = _normalize_sqlite_path(
+        _pick_setting('DB_PATH', file_config.get('sqlite_path'), _default_host_database_path()),
+        fallback_to_default=True,
+    )
+    deployment_role = _normalize_role(file_config.get('deployment_role'))
+    if deployment_role == CLIENT_DEPLOYMENT_ROLE and not os.getenv('DB_PATH'):
+        sqlite_path = _normalize_sqlite_path(file_config.get('shared_database_path') or sqlite_path, fallback_to_default=False)
 
-    settings = {
-        'engine': engine,
+    return {
+        'engine': DEFAULT_DB_ENGINE,
         'sqlite_path': sqlite_path,
-        'deployment_role': str(file_config.get('deployment_role') or 'client').strip().lower() or 'client',
+        'shared_database_path': str(file_config.get('shared_database_path') or '').strip(),
+        'deployment_role': deployment_role,
         'setup_completed': bool(file_config.get('setup_completed')),
-        'server_host_hint': str(file_config.get('server_host_hint') or '').strip(),
-        'mysql': {
-            'host': str(_pick_setting('DB_HOST', mysql_file_config.get('host'), DEFAULT_DB_HOST)).strip() or DEFAULT_DB_HOST,
-            'port': _get_port(),
-            'user': str(_pick_setting('DB_USER', mysql_file_config.get('user'), DEFAULT_DB_USER)).strip(),
-            'password': str(_pick_setting('DB_PASSWORD', mysql_file_config.get('password'), DEFAULT_DB_PASSWORD)),
-            'database': database_name,
-        },
+        'host_display_name': str(file_config.get('host_display_name') or '').strip(),
+        'host_ip_hint': str(file_config.get('host_ip_hint') or '').strip(),
         'config_file': config_file,
         'env_overrides': {
             key: os.getenv(key)
-            for key in ('DB_ENGINE', 'DB_PATH', 'DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME')
+            for key in ('DB_PATH',)
             if os.getenv(key) not in (None, '')
         },
     }
-    return settings
 
 
 def database_config_requires_setup() -> bool:
@@ -254,31 +247,16 @@ def database_config_requires_setup() -> bool:
     if not config_file.exists():
         return True
 
-    if settings['engine'] == 'sqlite':
-        return True
-
-    if settings['engine'] != 'mysql':
+    if settings['deployment_role'] not in {HOST_DEPLOYMENT_ROLE, CLIENT_DEPLOYMENT_ROLE}:
         return True
 
     if not settings.get('setup_completed'):
         return True
 
-    mysql_settings = settings['mysql']
-    return not all(
-        [
-            mysql_settings.get('host'),
-            mysql_settings.get('user'),
-            mysql_settings.get('database'),
-        ]
-    )
+    if settings['deployment_role'] == CLIENT_DEPLOYMENT_ROLE:
+        return not bool(settings.get('shared_database_path'))
 
-
-def _quote_mysql_string(value: str) -> str:
-    return "'" + str(value or '').replace("\\", "\\\\").replace("'", "''") + "'"
-
-
-def _quote_mysql_identifier(value: str) -> str:
-    return "`" + str(value or '').replace("`", "``") + "`"
+    return not bool(settings.get('sqlite_path'))
 
 
 def detect_local_ipv4_addresses() -> list[str]:
@@ -310,75 +288,32 @@ def detect_local_ipv4_addresses() -> list[str]:
     return addresses
 
 
-def build_server_database_config(server_ip: str, database: str = DEFAULT_DB_NAME, port: int = DEFAULT_DB_PORT) -> dict:
+def build_host_database_config(database_path: str | None = None, *, host_display_name: str = '', host_ip_hint: str = '') -> dict:
     return normalize_database_config(
         {
-            'engine': 'mysql',
-            'deployment_role': 'server',
+            'engine': DEFAULT_DB_ENGINE,
+            'deployment_role': HOST_DEPLOYMENT_ROLE,
             'setup_completed': True,
-            'server_host_hint': server_ip,
-            'mysql': {
-                'host': '127.0.0.1',
-                'port': port,
-                'user': DEFAULT_DB_USER,
-                'password': DEFAULT_DB_PASSWORD,
-                'database': database,
-            },
+            'sqlite_path': database_path or _default_host_database_path(),
+            'shared_database_path': database_path or _default_host_database_path(),
+            'host_display_name': host_display_name,
+            'host_ip_hint': host_ip_hint,
         }
     )
 
 
-def build_client_database_config(server_ip: str, database: str = DEFAULT_DB_NAME, port: int = DEFAULT_DB_PORT) -> dict:
+def build_client_database_config(shared_database_path: str, *, host_display_name: str = '', host_ip_hint: str = '') -> dict:
     return normalize_database_config(
         {
-            'engine': 'mysql',
-            'deployment_role': 'client',
+            'engine': DEFAULT_DB_ENGINE,
+            'deployment_role': CLIENT_DEPLOYMENT_ROLE,
             'setup_completed': True,
-            'server_host_hint': server_ip,
-            'mysql': {
-                'host': str(server_ip or '').strip(),
-                'port': port,
-                'user': DEFAULT_DB_USER,
-                'password': DEFAULT_DB_PASSWORD,
-                'database': database,
-            },
+            'sqlite_path': shared_database_path,
+            'shared_database_path': shared_database_path,
+            'host_display_name': host_display_name,
+            'host_ip_hint': host_ip_hint,
         }
     )
-
-
-def bootstrap_mysql_server(admin_user: str, admin_password: str, database: str = DEFAULT_DB_NAME, port: int = DEFAULT_DB_PORT):
-    if mysql is None:
-        raise RuntimeError("mysql-connector-python n'est pas disponible.")
-
-    normalized_admin_user = str(admin_user or '').strip()
-    if not normalized_admin_user:
-        raise ValueError("Le compte administrateur MySQL est obligatoire.")
-
-    database_name = str(database or DEFAULT_DB_NAME).strip() or DEFAULT_DB_NAME
-    conn = mysql.connector.connect(
-        host='127.0.0.1',
-        port=int(port),
-        user=normalized_admin_user,
-        password=str(admin_password or ''),
-        connection_timeout=MYSQL_CONNECT_TIMEOUT_SECONDS,
-    )
-    cursor = conn.cursor()
-    try:
-        quoted_database = _quote_mysql_identifier(database_name)
-        app_user_local = _quote_mysql_string(DEFAULT_DB_USER)
-        app_password_local = _quote_mysql_string(DEFAULT_DB_PASSWORD)
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {quoted_database}")
-        cursor.execute(f"CREATE USER IF NOT EXISTS {app_user_local}@'localhost' IDENTIFIED BY {app_password_local}")
-        cursor.execute(f"ALTER USER {app_user_local}@'localhost' IDENTIFIED BY {app_password_local}")
-        cursor.execute(f"CREATE USER IF NOT EXISTS {app_user_local}@'%' IDENTIFIED BY {app_password_local}")
-        cursor.execute(f"ALTER USER {app_user_local}@'%' IDENTIFIED BY {app_password_local}")
-        cursor.execute(f"GRANT ALL PRIVILEGES ON {quoted_database}.* TO {app_user_local}@'localhost'")
-        cursor.execute(f"GRANT ALL PRIVILEGES ON {quoted_database}.* TO {app_user_local}@'%'")
-        cursor.execute("FLUSH PRIVILEGES")
-        conn.commit()
-    finally:
-        cursor.close()
-        conn.close()
 
 
 def save_database_config(config: dict, config_path: Path | None = None) -> Path:
@@ -391,41 +326,26 @@ def save_database_config(config: dict, config_path: Path | None = None) -> Path:
 
 def test_database_connection(config: dict | None = None):
     normalized = normalize_database_config(config) if config is not None else get_database_settings()
-    engine = normalized['engine']
-    if engine == 'sqlite':
-        conn = connect_sqlite(Path(normalized['sqlite_path']))
-        conn.close()
-        return
+    sqlite_path = str(normalized.get('sqlite_path') or '').strip()
+    if not sqlite_path:
+        raise ValueError("Le chemin de la base SQLite est obligatoire.")
 
-    if mysql is None:
-        raise RuntimeError("mysql-connector-python n'est pas disponible.")
+    database_path = Path(sqlite_path)
+    create_if_missing = normalized.get('deployment_role') != CLIENT_DEPLOYMENT_ROLE
+    if not create_if_missing and not database_path.exists():
+        raise FileNotFoundError(
+            "Le fichier SQLite partagé est introuvable. Vérifiez le chemin réseau et le partage Windows."
+        )
 
-    db_name = str(normalized['mysql']['database']).replace('`', '``')
-    conn = mysql.connector.connect(
-        host=normalized['mysql']['host'],
-        port=normalized['mysql']['port'],
-        user=normalized['mysql']['user'],
-        password=normalized['mysql']['password'],
-        connection_timeout=MYSQL_CONNECT_TIMEOUT_SECONDS,
-    )
-    cursor = conn.cursor()
-    try:
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{db_name}`")
-        cursor.execute(f"USE `{db_name}`")
-        cursor.execute("SELECT 1")
-        cursor.fetchone()
-    finally:
-        cursor.close()
-        conn.close()
+    conn = connect_sqlite(database_path, create_if_missing=create_if_missing)
+    conn.close()
 
 
 FILE_CONFIG, DB_CONFIG_FILE = _load_file_config()
-DB_NAME = get_database_settings()['mysql']['database']
+DB_NAME = Path(get_database_settings()['sqlite_path']).name
 DB_ENGINE = get_database_settings()['engine']
 DB_PATH = get_database_settings()['sqlite_path']
 DB_CONFIG = {
-    'host': get_database_settings()['mysql']['host'],
-    'port': get_database_settings()['mysql']['port'],
-    'user': get_database_settings()['mysql']['user'],
-    'password': get_database_settings()['mysql']['password'],
+    'sqlite_path': get_database_settings()['sqlite_path'],
+    'deployment_role': get_database_settings()['deployment_role'],
 }

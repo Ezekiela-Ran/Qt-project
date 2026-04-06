@@ -14,7 +14,11 @@ class StandardInvoiceRecord(QtWidgets.QWidget):
         self.setObjectName("card")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
-        self.list_record = ListRecordTemplate(self.standardinvoice.headers, self.standardinvoice.data)
+        self.list_record = ListRecordTemplate(
+            self.standardinvoice.headers,
+            self.standardinvoice.data,
+            searchable_columns=[0, 1],
+        )
         self.list_record.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -71,18 +75,10 @@ class StandardInvoiceRecord(QtWidgets.QWidget):
 
             # Sélectionner les produits avec leurs Ref.b.analyse sauvegardés
             selected_items = self.standardinvoice.get_invoice_items_with_refs(invoice_id, 'standard')
-            selected_products = [row['product_id'] for row in selected_items]
-            ref_mapping = {
-                row['product_id']: row.get('ref_b_analyse')
-                for row in selected_items
-                if row.get('ref_b_analyse') is not None
-            }
-            num_act_mapping = {
-                row['product_id']: row.get('num_act')
-                for row in selected_items
-                if row.get('num_act') is not None and str(row.get('num_act')).strip() != ''
-            }
-            self.parent().parent().body_layout.product_manager.select_products(selected_products, ref_mapping=ref_mapping, num_act_mapping=num_act_mapping)
+            self.parent().parent().body_layout.product_manager.select_products(
+                [],
+                line_items=selected_items,
+            )
             self.parent().parent().body_layout.product_manager.set_loaded_record_locked(True)
             
             # Mettre à jour le total

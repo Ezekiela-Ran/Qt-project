@@ -2,7 +2,7 @@ from models.database_manager import DatabaseManager
 
 class StandardInvoice(DatabaseManager):
     table_name = "standard_invoice"
-    headers = ["ID","Raison sociale","Adresse","Date d'émission","Date de resultat","réference produit","Responsable", "Total"]
+    headers = ["N° fact", "Raison sociale", "Adresse", "Date d'émission", "Date de résultat", "Référence produit", "Responsable", "Total"]
     data = []
 
     def get_standard_invoices(self):

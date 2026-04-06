@@ -3,12 +3,13 @@ from PySide6 import QtCore
 
 class ListRecordTemplate(QWidget):
 
-    def __init__(self, headers : list[str], data: list = None, parent=None):
+    def __init__(self, headers : list[str], data: list = None, parent=None, searchable_columns: list[int] | None = None):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.headers = headers
         self.data = data or []
         self.all_data = self.data.copy()  # Keep original data for filtering
+        self.searchable_columns = searchable_columns
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -90,12 +91,20 @@ class ListRecordTemplate(QWidget):
             invoice_id = self.table.item(current_row, 0).text()
             self.parent().load_invoice_data(invoice_id)
 
+    def _row_matches_search(self, row, search_text: str) -> bool:
+        columns = self.searchable_columns
+        if columns is None:
+            values = row
+        else:
+            values = [row[index] for index in columns if 0 <= index < len(row)]
+        return any(search_text in str(cell).lower() for cell in values)
+
     def filter_data(self, _text=None):
         search_text = self.search_input.text().strip().lower()
         if not search_text:
             self.data = self.all_data.copy()
         else:
-            self.data = [row for row in self.all_data if any(search_text in str(cell).lower() for cell in row)]
+            self.data = [row for row in self.all_data if self._row_matches_search(row, search_text)]
         self._add_row()
 
     def update_data(self, new_data, preserve_state=False):
@@ -116,7 +125,7 @@ class ListRecordTemplate(QWidget):
             else:
                 self.data = [
                     row for row in self.all_data
-                    if any(normalized_search in str(cell).lower() for cell in row)
+                    if self._row_matches_search(row, normalized_search)
                 ]
             self._add_row()
             if preserve_state:

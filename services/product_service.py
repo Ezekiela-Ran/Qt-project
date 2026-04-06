@@ -4,6 +4,9 @@ class ProductService:
     def __init__(self):
         self.db = DatabaseManager()
 
+    def get_all_product_types(self):
+        return self.db.get_all_product_types()
+
     def get_products_by_type(self, type_id):
         return self.db.get_products_by_type(type_id)
 
@@ -16,8 +19,8 @@ class ProductService:
     def get_product_by_id(self, product_id):
         return self.db.get_product_by_id(product_id)
 
-    def add_product(self, type_id, name):
-        return self.db.add_product(type_id, name)
+    def add_product(self, type_id, name, analysis_duration_days=0, default_quantity=1):
+        return self.db.add_product(type_id, name, analysis_duration_days, default_quantity)
 
     def update_product_name(self, pid, name):
         return self.db.update_product_name(pid, name)
@@ -25,10 +28,20 @@ class ProductService:
     def is_num_act_unique(self, num_act, exclude_product_id=None):
         return self.db.is_num_act_unique(num_act, exclude_product_id=exclude_product_id)
 
-    def update_product(self, pid, ref, num_act, physico, toxico, micro, subtotal, update_ref=True):
+    def update_product(self, pid, ref, num_act, physico, toxico, micro, subtotal, update_ref=True, analysis_duration_days=None, default_quantity=None):
         # If update_ref is False, pass None for ref so DB method won't change it
         ref_value = ref if update_ref else None
-        return self.db.update_product(pid, ref_value, num_act, physico, toxico, micro, subtotal)
+        return self.db.update_product(
+            pid,
+            ref_value,
+            num_act,
+            physico,
+            toxico,
+            micro,
+            subtotal,
+            analysis_duration_days=analysis_duration_days,
+            default_quantity=default_quantity,
+        )
 
     def delete_product(self, pid):
         return self.db.delete_product(pid)

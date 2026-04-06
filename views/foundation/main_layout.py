@@ -10,27 +10,39 @@ from models.database_manager import DatabaseManager
 
 
 class CounterInitializationWorker(QtCore.QObject):
-    succeeded = QtCore.Signal(int, int)
+    succeeded = QtCore.Signal(int, int, int, int)
     failed = QtCore.Signal(str, str)
     finished = QtCore.Signal()
 
-    def __init__(self, invoice_start: int, ref_start: int):
+    def __init__(self, invoice_start: int, ref_start: int, cert_cc_start: int, cert_cnc_start: int):
         super().__init__()
         self.invoice_start = int(invoice_start)
         self.ref_start = int(ref_start)
+        self.cert_cc_start = int(cert_cc_start)
+        self.cert_cnc_start = int(cert_cnc_start)
 
     @QtCore.Slot()
     def run(self):
         db = None
         try:
             db = DatabaseManager()
-            db.initialize_document_counters(self.invoice_start, self.ref_start)
+            db.initialize_document_counters(
+                self.invoice_start,
+                self.ref_start,
+                self.cert_cc_start,
+                self.cert_cnc_start,
+            )
         except ValueError as exc:
             self.failed.emit("warning", str(exc))
         except Exception as exc:
             self.failed.emit("critical", f"L'initialisation a échoué : {exc}")
         else:
-            self.succeeded.emit(self.invoice_start, self.ref_start)
+            self.succeeded.emit(
+                self.invoice_start,
+                self.ref_start,
+                self.cert_cc_start,
+                self.cert_cnc_start,
+            )
         finally:
             if db is not None:
                 db.close()
@@ -45,6 +57,8 @@ class MainLayout(QWidget):
         self._counter_init_progress = None
         self._last_invoice_start = 1
         self._last_ref_start = 1
+        self._last_cert_cc_start = 1
+        self._last_cert_cnc_start = 1
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(8)
@@ -106,13 +120,33 @@ class MainLayout(QWidget):
             if not ok:
                 return
 
-            self._start_counter_initialization(invoice_start, ref_start)
+            cert_cc_start, ok = QInputDialog.getInt(
+                self,
+                "Initialiser N° cert CC",
+                "Valeur de départ pour le N° certificat CC :",
+                value=self._last_cert_cc_start,
+                minValue=1,
+            )
+            if not ok:
+                return
+
+            cert_cnc_start, ok = QInputDialog.getInt(
+                self,
+                "Initialiser N° cert CNC",
+                "Valeur de départ pour le N° certificat CNC :",
+                value=self._last_cert_cnc_start,
+                minValue=1,
+            )
+            if not ok:
+                return
+
+            self._start_counter_initialization(invoice_start, ref_start, cert_cc_start, cert_cnc_start)
         except ValueError as exc:
             QMessageBox.warning(self, "Initialisation impossible", str(exc))
         except Exception as exc:
             QMessageBox.critical(self, "Erreur", f"L'initialisation a échoué : {exc}")
 
-    def _start_counter_initialization(self, invoice_start: int, ref_start: int):
+    def _start_counter_initialization(self, invoice_start: int, ref_start: int, cert_cc_start: int, cert_cnc_start: int):
         if self._counter_init_thread is not None:
             QMessageBox.information(
                 self,
@@ -135,7 +169,12 @@ class MainLayout(QWidget):
         self._counter_init_progress.show()
 
         self._counter_init_thread = QtCore.QThread(self)
-        self._counter_init_worker = CounterInitializationWorker(invoice_start, ref_start)
+        self._counter_init_worker = CounterInitializationWorker(
+            invoice_start,
+            ref_start,
+            cert_cc_start,
+            cert_cnc_start,
+        )
         self._counter_init_worker.moveToThread(self._counter_init_thread)
 
         self._counter_init_thread.started.connect(self._counter_init_worker.run)
@@ -148,13 +187,19 @@ class MainLayout(QWidget):
 
         self._counter_init_thread.start()
 
-    def _handle_counter_init_success(self, invoice_start: int, ref_start: int):
+    def _handle_counter_init_success(self, invoice_start: int, ref_start: int, cert_cc_start: int, cert_cnc_start: int):
         self._last_invoice_start = int(invoice_start)
         self._last_ref_start = int(ref_start)
+        self._last_cert_cc_start = int(cert_cc_start)
+        self._last_cert_cnc_start = int(cert_cnc_start)
         QMessageBox.information(
             self,
             "Initialisation réussie",
-            f"Les prochains identifiants commenceront à {invoice_start} pour les factures et à {ref_start} pour Ref.b.analyse.",
+            (
+                f"Les prochains identifiants commenceront à {invoice_start} pour les factures, "
+                f"à {ref_start} pour Ref.b.analyse, à {cert_cc_start} pour les certificats CC "
+                f"et à {cert_cnc_start} pour les certificats CNC."
+            ),
         )
 
     def _handle_counter_init_failure(self, severity: str, message: str):

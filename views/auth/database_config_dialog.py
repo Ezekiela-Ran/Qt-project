@@ -1,14 +1,11 @@
 from pathlib import Path
+import socket
 
 from PySide6 import QtWidgets
 
 from models.database.db_config import (
-    DEFAULT_DB_NAME,
-    DEFAULT_DB_PORT,
-    DEFAULT_DB_USER,
-    bootstrap_mysql_server,
     build_client_database_config,
-    build_server_database_config,
+    build_host_database_config,
     detect_local_ipv4_addresses,
     get_database_settings,
     save_database_config,
@@ -79,8 +76,9 @@ class DatabaseConfigDialog(QtWidgets.QDialog):
         self.settings = get_database_settings()
         self.config_path = Path(self.settings['config_file'])
         self.detected_ips = detect_local_ipv4_addresses()
+        self.host_name = socket.gethostname()
         self.setModal(True)
-        self.setWindowTitle("Configuration MySQL")
+        self.setWindowTitle("Configuration SQLite")
         self.setStyleSheet(_DIALOG_STYLE)
         self._build_ui()
         self._load_values()
@@ -91,7 +89,7 @@ class DatabaseConfigDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
 
         intro = QtWidgets.QLabel(
-            "Choisis si ce poste héberge la base MySQL ou s'il se connecte au PC serveur. Tous les utilisateurs et administrateurs seront identiques sur chaque poste uniquement si tous les PC utilisent cette même base MySQL."
+            "Choisis si ce poste partage la base SQLite ou s'il utilise une base déjà partagée depuis un autre PC. Tous les utilisateurs, administrateurs et documents seront communs tant que tous les postes pointent vers le même fichier SQLite."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -111,44 +109,45 @@ class DatabaseConfigDialog(QtWidgets.QDialog):
         role_form = QtWidgets.QFormLayout()
         self.role_input = QtWidgets.QComboBox()
         self.role_input.setObjectName("roleInput")
-        self.role_input.addItem("Ce PC est le serveur", "server")
-        self.role_input.addItem("Ce PC est un client", "client")
+        self.role_input.addItem("Ce PC partage la base", "host")
+        self.role_input.addItem("Ce PC utilise une base partagée", "client")
         self.role_input.currentIndexChanged.connect(self._toggle_role_fields)
         role_form.addRow("Rôle de ce poste:", self.role_input)
         layout.addLayout(role_form)
 
-        self.server_group = QtWidgets.QGroupBox("Configuration du PC serveur")
-        server_form = QtWidgets.QFormLayout(self.server_group)
+        self.host_group = QtWidgets.QGroupBox("Configuration du PC qui partage la base")
+        host_form = QtWidgets.QFormLayout(self.host_group)
+        self.host_database_input = QtWidgets.QLineEdit()
+        self.host_database_browse_button = QtWidgets.QPushButton("Parcourir")
+        self.host_database_browse_button.clicked.connect(self._browse_host_database_path)
+        host_path_layout = QtWidgets.QHBoxLayout()
+        host_path_layout.addWidget(self.host_database_input)
+        host_path_layout.addWidget(self.host_database_browse_button)
         self.server_ip_label = QtWidgets.QLabel()
         self.server_ip_label.setWordWrap(True)
-        self.mysql_admin_user_input = QtWidgets.QLineEdit("root")
-        self.mysql_admin_password_input = QtWidgets.QLineEdit()
-        self.mysql_admin_password_input.setEchoMode(QtWidgets.QLineEdit.Password)
-        self.port_input = QtWidgets.QSpinBox()
-        self.port_input.setRange(1, 65535)
-        self.database_input = QtWidgets.QLineEdit()
-        self.app_user_label = QtWidgets.QLabel(DEFAULT_DB_USER)
-        self.app_password_label = QtWidgets.QLabel("Compte applicatif partagé automatiquement avec les clients")
-        server_form.addRow("IP locale à communiquer aux clients:", self.server_ip_label)
-        server_form.addRow("Compte admin MySQL existant:", self.mysql_admin_user_input)
-        server_form.addRow("Mot de passe admin MySQL:", self.mysql_admin_password_input)
-        server_form.addRow("Port MySQL:", self.port_input)
-        server_form.addRow("Base de données:", self.database_input)
-        server_form.addRow("Compte applicatif partagé:", self.app_user_label)
-        server_form.addRow("Note:", self.app_password_label)
-        layout.addWidget(self.server_group)
+        self.host_name_label = QtWidgets.QLabel(self.host_name)
+        self.share_help_label = QtWidgets.QLabel()
+        self.share_help_label.setWordWrap(True)
+        host_form.addRow("Nom du PC:", self.host_name_label)
+        host_form.addRow("Fichier SQLite local:", host_path_layout)
+        host_form.addRow("IP à communiquer aux clients:", self.server_ip_label)
+        host_form.addRow("Partage Windows à créer:", self.share_help_label)
+        layout.addWidget(self.host_group)
 
         self.client_group = QtWidgets.QGroupBox("Configuration du PC client")
         client_form = QtWidgets.QFormLayout(self.client_group)
-        self.host_input = QtWidgets.QLineEdit()
-        self.client_port_input = QtWidgets.QSpinBox()
-        self.client_port_input.setRange(1, 65535)
-        self.client_database_label = QtWidgets.QLabel(DEFAULT_DB_NAME)
-        self.client_user_label = QtWidgets.QLabel(DEFAULT_DB_USER)
-        client_form.addRow("IP du PC serveur:", self.host_input)
-        client_form.addRow("Port MySQL:", self.client_port_input)
-        client_form.addRow("Base partagée:", self.client_database_label)
-        client_form.addRow("Compte applicatif partagé:", self.client_user_label)
+        self.client_database_input = QtWidgets.QLineEdit()
+        self.client_database_browse_button = QtWidgets.QPushButton("Parcourir")
+        self.client_database_browse_button.clicked.connect(self._browse_client_database_path)
+        client_path_layout = QtWidgets.QHBoxLayout()
+        client_path_layout.addWidget(self.client_database_input)
+        client_path_layout.addWidget(self.client_database_browse_button)
+        self.client_example_label = QtWidgets.QLabel(
+            "Exemple: \\\\PC-HOTE\\FacCP\\faccp.db"
+        )
+        self.client_example_label.setWordWrap(True)
+        client_form.addRow("Fichier SQLite partagé:", client_path_layout)
+        client_form.addRow("Exemple de chemin réseau:", self.client_example_label)
         layout.addWidget(self.client_group)
 
         buttons = QtWidgets.QDialogButtonBox()
@@ -162,22 +161,50 @@ class DatabaseConfigDialog(QtWidgets.QDialog):
         layout.addWidget(buttons)
 
     def _load_values(self):
-        role = self.settings.get('deployment_role') or 'client'
+        role = self.settings.get('deployment_role') or 'host'
         role_index = max(0, self.role_input.findData(role))
         self.role_input.setCurrentIndex(role_index)
         self.server_ip_label.setText(", ".join(self.detected_ips))
-        self.host_input.setText(self.settings['server_host_hint'] or self.settings['mysql']['host'])
-        self.port_input.setValue(int(self.settings['mysql']['port']))
-        self.database_input.setText(self.settings['mysql']['database'])
-        self.client_port_input.setValue(int(self.settings['mysql']['port']))
-        self.client_database_label.setText(self.settings['mysql']['database'])
-        self.client_user_label.setText(DEFAULT_DB_USER)
+        self.host_database_input.setText(self.settings['sqlite_path'])
+        self.client_database_input.setText(self.settings['shared_database_path'])
+        host_folder = Path(self.host_database_input.text().strip() or self.settings['sqlite_path']).parent
+        self.share_help_label.setText(
+            f"Partage le dossier {host_folder} sur Windows, puis donne le chemin réseau complet du fichier .db aux autres postes."
+        )
         self.path_label.setText(f"Fichier de configuration: {self.config_path}")
 
     def _toggle_role_fields(self):
         role = self.role_input.currentData()
-        self.server_group.setVisible(role == 'server')
+        self.host_group.setVisible(role == 'host')
         self.client_group.setVisible(role == 'client')
+
+    def _browse_host_database_path(self):
+        initial_path = self.host_database_input.text().strip() or self.settings['sqlite_path']
+        selected_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Choisir le fichier SQLite local",
+            initial_path,
+            "Base SQLite (*.db);;Tous les fichiers (*)",
+        )
+        if not selected_path:
+            return
+        if not selected_path.lower().endswith('.db'):
+            selected_path += '.db'
+        self.host_database_input.setText(selected_path)
+        self.share_help_label.setText(
+            f"Partage le dossier {Path(selected_path).parent} sur Windows, puis donne le chemin réseau complet du fichier .db aux autres postes."
+        )
+
+    def _browse_client_database_path(self):
+        initial_path = self.client_database_input.text().strip() or self.settings.get('shared_database_path') or self.settings['sqlite_path']
+        selected_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Choisir le fichier SQLite partagé",
+            initial_path,
+            "Base SQLite (*.db);;Tous les fichiers (*)",
+        )
+        if selected_path:
+            self.client_database_input.setText(selected_path)
 
     def _apply_initial_size(self):
         size_hint = self.sizeHint().expandedTo(self.minimumSizeHint())
@@ -194,27 +221,32 @@ class DatabaseConfigDialog(QtWidgets.QDialog):
 
     def _collect_config(self) -> dict:
         role = self.role_input.currentData()
-        database_name = self.database_input.text().strip() or DEFAULT_DB_NAME
-        if role == 'server':
-            server_ip = self.detected_ips[0] if self.detected_ips else '127.0.0.1'
-            return build_server_database_config(server_ip=server_ip, database=database_name, port=self.port_input.value())
+        host_ip = self.detected_ips[0] if self.detected_ips else '127.0.0.1'
+        if role == 'host':
+            return build_host_database_config(
+                self.host_database_input.text().strip(),
+                host_display_name=self.host_name,
+                host_ip_hint=host_ip,
+            )
 
-        return build_client_database_config(server_ip=self.host_input.text().strip(), database=database_name, port=self.client_port_input.value())
+        return build_client_database_config(self.client_database_input.text().strip())
 
     def _validate(self, config: dict) -> bool:
         missing_fields = []
-        if self.role_input.currentData() == 'server' and not self.mysql_admin_user_input.text().strip():
-            missing_fields.append("Compte admin MySQL")
-        if self.role_input.currentData() == 'client' and not config['mysql']['host']:
-            missing_fields.append("IP du PC serveur")
-        if not config['mysql']['database']:
-            missing_fields.append("Base de données")
+        if self.role_input.currentData() == 'host' and not config['sqlite_path']:
+            missing_fields.append("Fichier SQLite local")
+        if self.role_input.currentData() == 'client' and not config['sqlite_path']:
+            missing_fields.append("Fichier SQLite partagé")
         if missing_fields:
             QtWidgets.QMessageBox.warning(
                 self,
                 "Configuration invalide",
-                "Champs MySQL obligatoires manquants: " + ", ".join(missing_fields),
+                "Champs obligatoires manquants: " + ", ".join(missing_fields),
             )
+            return False
+        database_path = Path(config['sqlite_path'])
+        if self.role_input.currentData() == 'host' and database_path.suffix.lower() != '.db':
+            QtWidgets.QMessageBox.warning(self, "Configuration invalide", "Le fichier SQLite du poste hôte doit avoir l'extension .db.")
             return False
         return True
 
@@ -223,49 +255,41 @@ class DatabaseConfigDialog(QtWidgets.QDialog):
         if not self._validate(config):
             return
         try:
-            if self.role_input.currentData() == 'server':
-                bootstrap_mysql_server(
-                    self.mysql_admin_user_input.text().strip(),
-                    self.mysql_admin_password_input.text(),
-                    database=config['mysql']['database'],
-                    port=config['mysql']['port'],
-                )
             test_database_connection(config)
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Connexion impossible", f"Le test a échoué : {exc}")
             return
-        if self.role_input.currentData() == 'server':
+        if self.role_input.currentData() == 'host':
+            share_folder = Path(config['sqlite_path']).parent
             server_ip = self.detected_ips[0] if self.detected_ips else '127.0.0.1'
-            QtWidgets.QMessageBox.information(self, "Serveur prêt", f"Le serveur MySQL est prêt. Communique cette IP aux clients: {server_ip}")
+            QtWidgets.QMessageBox.information(
+                self,
+                "Poste hôte prêt",
+                f"La base SQLite est prête dans {config['sqlite_path']}. Partage le dossier {share_folder} et communique l'IP {server_ip} ainsi que le chemin réseau complet du fichier .db aux clients.",
+            )
             return
-        QtWidgets.QMessageBox.information(self, "Connexion réussie", "La connexion au serveur MySQL est valide.")
+        QtWidgets.QMessageBox.information(self, "Connexion réussie", "La connexion au fichier SQLite partagé est valide.")
 
     def _save(self):
         config = self._collect_config()
         if not self._validate(config):
             return
         try:
-            if self.role_input.currentData() == 'server':
-                bootstrap_mysql_server(
-                    self.mysql_admin_user_input.text().strip(),
-                    self.mysql_admin_password_input.text(),
-                    database=config['mysql']['database'],
-                    port=config['mysql']['port'],
-                )
             test_database_connection(config)
             save_database_config(config, self.config_path)
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Enregistrement impossible", f"La configuration n'a pas pu être enregistrée : {exc}")
             return
 
-        if self.role_input.currentData() == 'server':
+        if self.role_input.currentData() == 'host':
             server_ip = self.detected_ips[0] if self.detected_ips else '127.0.0.1'
+            share_folder = Path(config['sqlite_path']).parent
             message = (
-                "Ce poste est maintenant configuré comme serveur. "
-                f"Configure les autres postes en client avec l'IP {server_ip} pour partager les mêmes administrateurs et utilisateurs."
+                "Ce poste est maintenant configuré comme poste hôte. "
+                f"Partage le dossier {share_folder} sur Windows, puis configure les autres postes avec l'IP {server_ip} et le chemin réseau complet du fichier {Path(config['sqlite_path']).name}."
             )
         else:
-            message = "Ce poste est maintenant configuré comme client MySQL. Les administrateurs et utilisateurs seront partagés avec le serveur."
+            message = "Ce poste est maintenant configuré comme client SQLite. Les administrateurs, utilisateurs et données seront partagés avec le poste hôte."
         if not self.first_run:
             message += " Déconnectez-vous puis reconnectez-vous pour recharger les connexions."
 

@@ -14,7 +14,11 @@ class ProformaInvoiceRecord(QtWidgets.QWidget):
         self.setObjectName("card")
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
-        self.list_record = ListRecordTemplate(self.proformainvoice.headers,self.proformainvoice.data)
+        self.list_record = ListRecordTemplate(
+            self.proformainvoice.headers,
+            self.proformainvoice.data,
+            searchable_columns=[0, 1],
+        )
         self.list_record.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -52,6 +56,8 @@ class ProformaInvoiceRecord(QtWidgets.QWidget):
             form.responsable_input.setText(GlobalVariable.current_username())
             if hasattr(form, 'date_input') and invoice['date']:
                 form.date_input.setDate(QDate.fromString(str(invoice['date']), "yyyy-MM-dd"))
+            if hasattr(form, 'proforma_invoice_number'):
+                form.proforma_invoice_number.setText(str(invoice['id']))
             
             # Enregistrer l'ID sélectionné pour une modification sur Enregistrer
             if hasattr(self.parent().parent(), 'body_layout'):

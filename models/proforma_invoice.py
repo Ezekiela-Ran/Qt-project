@@ -2,7 +2,7 @@ from models.database_manager import DatabaseManager
 
 class ProformaInvoice(DatabaseManager):
     table_name = "proform_invoice"
-    headers = ["ID", "Raison sociale","Date","Responsable", "Total"]
+    headers = ["N° fact", "Raison sociale","Date","Responsable", "Total"]
     data = []
 
     def get_proforma_invoices(self):

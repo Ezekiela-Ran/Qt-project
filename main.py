@@ -193,20 +193,20 @@ class ApplicationController:
             DatabaseManager.create_tables()
         except Exception as exc:
             settings = get_database_settings()
-            if settings['engine'] == 'mysql':
-                host = settings['mysql']['host']
-                port = settings['mysql']['port']
-                database_name = settings['mysql']['database']
+            location = settings['sqlite_path']
+            if settings.get('deployment_role') == 'client':
                 raise RuntimeError(
-                    "Le demarrage a echoue pendant la connexion MySQL vers "
-                    f"{host}:{port} (base {database_name}). Verifiez que le serveur est accessible, "
-                    "puis relancez l'application."
+                    "Le démarrage a échoué pendant l'ouverture de la base SQLite partagée "
+                    f"{location}. Vérifiez le partage Windows, le chemin réseau et la disponibilité du poste hôte, puis relancez l'application."
                 ) from exc
-            raise
+            raise RuntimeError(
+                "Le démarrage a échoué pendant l'ouverture de la base SQLite locale "
+                f"{location}. Vérifiez que le dossier est accessible en écriture, puis relancez l'application."
+            ) from exc
 
 
 def log_startup_error(exc: Exception) -> Path:
-    log_path = Path(tempfile.gettempdir()) / "fac-startup.log"
+    log_path = Path(tempfile.gettempdir()) / "faccp-startup.log"
     details = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     log_path.write_text(details, encoding="utf-8")
     return log_path
@@ -222,7 +222,7 @@ def show_startup_error(exc: Exception):
 
     QMessageBox.critical(
         None,
-        "FaC - Erreur de demarrage",
+        "FacCP - Erreur de démarrage",
         "L'application n'a pas pu démarrer.\n\n"
         f"Erreur: {exc}\n\n"
         f"Détails enregistrés dans: {log_path}"
