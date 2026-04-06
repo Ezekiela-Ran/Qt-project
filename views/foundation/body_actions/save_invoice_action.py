@@ -4,22 +4,6 @@ from views.foundation.globals import GlobalVariable
 
 class SaveInvoiceAction:
     @staticmethod
-    def _allocate_refs_for_save(body_layout, selected_products):
-        pm = body_layout.product_manager
-        allocated_refs = dict(pm.get_selected_ref_mapping())
-        ordered_selected = [
-            pid for pid in pm.selection_order
-            if pid in selected_products and pm.selected_products.get(pid, False)
-        ]
-
-        for pid in ordered_selected:
-            if pid in allocated_refs:
-                continue
-            allocated_refs[pid] = int(body_layout.product_service.allocate_next_ref_b_analyse())
-
-        return allocated_refs
-
-    @staticmethod
     def _refresh_record_list(main_layout, body_layout):
         head_layout = getattr(main_layout, "head_layout", None)
         record_widget = getattr(head_layout, "record", None)
@@ -61,36 +45,35 @@ class SaveInvoiceAction:
         if hasattr(form, "set_responsable_username"):
             form.set_responsable_username(responsable)
 
-        selected_products = [
-            pid for pid, selected in body_layout.product_manager.selected_products.items() if selected
-        ]
-        if not selected_products:
+        pm = body_layout.product_manager
+        selected_line_items = pm.build_selected_line_items()
+        if not selected_line_items:
             errors.append("Au moins un produit doit être sélectionné")
 
-        pm = body_layout.product_manager
-        selected_refs = pm.get_selected_ref_mapping() if GlobalVariable.invoice_type == "standard" else {}
-        selected_num_acts = pm.get_selected_num_act_mapping() if GlobalVariable.invoice_type == "standard" else {}
-        selected_result_dates = pm.get_selected_result_date_mapping() if GlobalVariable.invoice_type == "standard" else {}
         if GlobalVariable.invoice_type == "standard":
-            if not body_layout.current_invoice_id:
-                selected_refs = SaveInvoiceAction._allocate_refs_for_save(body_layout, selected_products)
-                pm.selected_refs.update(selected_refs)
+            next_ref = int(body_layout.product_service.get_max_ref_b_analyse() or 0) + 1
+            selected_line_items = pm.build_selected_line_items(
+                allocate_missing_refs=True,
+                start_ref=next_ref,
+                persist_allocations=True,
+            )
 
-            for pid in selected_products:
-                if pid not in selected_refs:
-                    product = body_layout.product_service.get_product_by_id(pid)
+            for line_item in selected_line_items:
+                if line_item.get("ref_b_analyse") is None:
+                    product = body_layout.product_service.get_product_by_id(line_item.get("product_id"))
                     product_name = product["product_name"] if product else "inconnu"
                     errors.append(
                         f"Ref.b.analyse manquant pour le produit {product_name}. Désélectionnez puis resélectionnez le produit."
                     )
 
             seen_num_act = {}
-            for pid in selected_products:
-                num_act = selected_num_acts.get(pid)
+            for line_item in selected_line_items:
+                pid = line_item.get("product_id")
+                num_act = line_item.get("num_act")
                 if num_act is None:
                     continue
                 if num_act in seen_num_act:
-                    first_pid = seen_num_act[num_act]
+                    first_pid = seen_num_act[num_act]["product_id"]
                     first_product = body_layout.product_service.get_product_by_id(first_pid)
                     second_product = body_layout.product_service.get_product_by_id(pid)
                     first_name = first_product["product_name"] if first_product else str(first_pid)
@@ -99,7 +82,9 @@ class SaveInvoiceAction:
                         f"N° Acte dupliqué dans la facture: '{num_act}' est utilisé pour {first_name} et {second_name}."
                     )
                 else:
-                    seen_num_act[num_act] = pid
+                    seen_num_act[num_act] = line_item
+        else:
+            selected_line_items = pm.build_selected_line_items()
 
         if errors:
             msg = QMessageBox()
@@ -129,10 +114,7 @@ class SaveInvoiceAction:
                     product_ref,
                     responsable,
                     total,
-                    selected_products,
-                    selected_refs,
-                    selected_num_acts,
-                    selected_result_dates,
+                    selected_line_items,
                 )
             else:
                 invoice_id = body_layout.invoice_service.save_standard_invoice(
@@ -145,10 +127,7 @@ class SaveInvoiceAction:
                     product_ref,
                     responsable,
                     total,
-                    selected_products,
-                    selected_refs,
-                    selected_num_acts,
-                    selected_result_dates,
+                    selected_line_items,
                 )
 
             if hasattr(form, "standard_invoice_number"):
@@ -167,7 +146,7 @@ class SaveInvoiceAction:
                     date_value,
                     responsable,
                     total,
-                    selected_products,
+                    selected_line_items,
                 )
             else:
                 invoice_id = body_layout.invoice_service.save_proforma_invoice(
@@ -177,7 +156,7 @@ class SaveInvoiceAction:
                     date_value,
                     responsable,
                     total,
-                    selected_products,
+                    selected_line_items,
                 )
 
             if hasattr(form, "proforma_invoice_number"):

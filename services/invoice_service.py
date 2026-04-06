@@ -4,17 +4,17 @@ class InvoiceService:
     def __init__(self):
         self.db = DatabaseManager()
 
-    def save_standard_invoice(self, company_name, stat, nif, address, date_issue, date_result, product_ref, responsable, total, selected_products, selected_refs=None, selected_num_acts=None, selected_result_dates=None):
-        return self.db.save_standard_invoice(company_name, stat, nif, address, date_issue, date_result, product_ref, responsable, total, selected_products, selected_refs, selected_num_acts, selected_result_dates)
+    def save_standard_invoice(self, company_name, stat, nif, address, date_issue, date_result, product_ref, responsable, total, selected_line_items):
+        return self.db.save_standard_invoice(company_name, stat, nif, address, date_issue, date_result, product_ref, responsable, total, selected_line_items)
 
-    def update_standard_invoice(self, invoice_id, company_name, stat, nif, address, date_issue, date_result, product_ref, responsable, total, selected_products, selected_refs=None, selected_num_acts=None, selected_result_dates=None):
-        return self.db.update_standard_invoice(invoice_id, company_name, stat, nif, address, date_issue, date_result, product_ref, responsable, total, selected_products, selected_refs, selected_num_acts, selected_result_dates)
+    def update_standard_invoice(self, invoice_id, company_name, stat, nif, address, date_issue, date_result, product_ref, responsable, total, selected_line_items):
+        return self.db.update_standard_invoice(invoice_id, company_name, stat, nif, address, date_issue, date_result, product_ref, responsable, total, selected_line_items)
 
-    def save_proforma_invoice(self, company_name, nif, stat, date, responsable, total, selected_products):
-        return self.db.save_proforma_invoice(company_name, nif, stat, date, responsable, total, selected_products)
+    def save_proforma_invoice(self, company_name, nif, stat, date, responsable, total, selected_line_items):
+        return self.db.save_proforma_invoice(company_name, nif, stat, date, responsable, total, selected_line_items)
 
-    def update_proforma_invoice(self, invoice_id, company_name, nif, stat, date, responsable, total, selected_products):
-        return self.db.update_proforma_invoice(invoice_id, company_name, nif, stat, date, responsable, total, selected_products)
+    def update_proforma_invoice(self, invoice_id, company_name, nif, stat, date, responsable, total, selected_line_items):
+        return self.db.update_proforma_invoice(invoice_id, company_name, nif, stat, date, responsable, total, selected_line_items)
 
     def get_standard_invoices(self):
         return self.db.get_standard_invoices()

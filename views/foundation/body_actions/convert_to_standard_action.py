@@ -6,9 +6,7 @@ class ConvertToStandardAction:
             return
 
         proforma_form = main_layout.head_layout.form
-        selected_products = [
-            pid for pid, selected in body_layout.product_manager.selected_products.items() if selected
-        ]
+        selected_line_items = body_layout.product_manager.get_preview_line_items()
 
         main_layout.menubar_click_standard()
 
@@ -19,5 +17,5 @@ class ConvertToStandardAction:
         standard_form.nif_input.setText(proforma_form.nif_input.text())
         standard_form.address_input.setText(proforma_form.address_input.text())
 
-        main_layout.body_layout.product_manager.select_products(selected_products)
+        main_layout.body_layout.product_manager.select_products([], line_items=selected_line_items)
         main_layout.body_layout.update_total_display()

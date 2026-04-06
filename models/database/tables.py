@@ -169,6 +169,7 @@ class Tables:
             CREATE TABLE IF NOT EXISTS products (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 product_name VARCHAR(255) NOT NULL,
+                default_quantity INT NOT NULL DEFAULT 1,
                 analysis_duration_days INT NOT NULL DEFAULT 0,
                 ref_b_analyse INT NOT NULL,
                 num_act VARCHAR(191),
@@ -189,6 +190,7 @@ class Tables:
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_name TEXT NOT NULL,
+            default_quantity INTEGER NOT NULL DEFAULT 1,
             analysis_duration_days INTEGER NOT NULL DEFAULT 0,
             ref_b_analyse INTEGER NOT NULL,
             num_act TEXT,
@@ -251,6 +253,7 @@ class Tables:
                 invoice_id INT NOT NULL,
                 invoice_type ENUM('standard', 'proforma') NOT NULL,
                 product_id INT NOT NULL,
+                invoice_item_id INT NULL,
                 certificate_type ENUM('CC', 'CNC') NOT NULL,
                 quantity VARCHAR(255),
                 quantity_analysee VARCHAR(255),
@@ -269,7 +272,7 @@ class Tables:
                 date_cert_modified TINYINT(1) NULL,
                 printed_at VARCHAR(32) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE KEY uk_certificate_entry_scope (invoice_id, invoice_type, product_id, certificate_type),
+                UNIQUE KEY uk_certificate_entry_scope (invoice_id, invoice_type, invoice_item_id, certificate_type),
                 FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
             )
             """)
@@ -281,6 +284,7 @@ class Tables:
             invoice_id INTEGER NOT NULL,
             invoice_type TEXT NOT NULL CHECK (invoice_type IN ('standard', 'proforma')),
             product_id INTEGER NOT NULL,
+            invoice_item_id INTEGER NULL,
             certificate_type TEXT NOT NULL CHECK (certificate_type IN ('CC', 'CNC')),
             quantity TEXT,
             quantity_analysee TEXT,
@@ -303,7 +307,7 @@ class Tables:
         )
         """)
         self.cursor.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uk_certificate_entry_scope ON certificate_entry(invoice_id, invoice_type, product_id, certificate_type)"
+            "CREATE UNIQUE INDEX IF NOT EXISTS uk_certificate_entry_scope ON certificate_entry(invoice_id, invoice_type, invoice_item_id, certificate_type)"
         )
 
     def app_settings_table(self):

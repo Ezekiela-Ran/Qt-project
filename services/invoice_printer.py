@@ -124,14 +124,24 @@ class InvoicePrinter:
         
         # Récupérer les produits
         products = []
-        for pid in selected_products:
+        for selected_item in selected_products:
+            if isinstance(selected_item, dict):
+                pid = selected_item.get('product_id')
+            else:
+                pid = selected_item
             prod = db_manager.get_product_by_id(pid)
             if not prod:
                 continue
-            if ref_mapping and pid in ref_mapping:
+            if isinstance(selected_item, dict):
+                prod = dict(prod)
+                if selected_item.get('ref_b_analyse') is not None:
+                    prod['ref_b_analyse'] = selected_item.get('ref_b_analyse')
+                if selected_item.get('num_act') is not None:
+                    prod['num_act'] = selected_item.get('num_act')
+            elif ref_mapping and pid in ref_mapping:
                 prod = dict(prod)
                 prod['ref_b_analyse'] = ref_mapping.get(pid)
-            if pid in num_act_mapping:
+            if not isinstance(selected_item, dict) and pid in num_act_mapping:
                 if not isinstance(prod, dict):
                     prod = dict(prod)
                 prod['num_act'] = num_act_mapping.get(pid)

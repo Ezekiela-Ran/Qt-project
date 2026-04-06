@@ -76,7 +76,7 @@ class OptionalDateEdit(QDateEdit):
         self.setDateRange(QDate(1900, 1, 1), QDate(7999, 12, 31))
         self.setDisplayFormat("dd/MM/yyyy")
         self.setSpecialValueText("")
-        self.setMinimumWidth(112)
+        self.setMinimumWidth(82)
         self.setProperty("user_modified", False)
         self.setProperty("loading_value", False)
         self._set_empty_state()
@@ -115,6 +115,7 @@ class CertificateWorkQueueDialog(QDialog):
         self._last_entries_signature: tuple = ()
         self._show_printed = False
         self._search_text = ""
+        self._copied_row_payload: dict | None = None
 
         self.setWindowTitle("Certificats")
         self.setModal(True)
@@ -141,12 +142,22 @@ class CertificateWorkQueueDialog(QDialog):
         note.setStyleSheet("color: #2F5A8F; font-weight: bold; margin-bottom: 4px;")
         layout.addWidget(note)
 
+        self.refresh_notification = QLabel("")
+        self.refresh_notification.setMinimumHeight(30)
+        self.refresh_notification.setWordWrap(True)
+        self.refresh_notification.setAlignment(Qt.AlignCenter)
+        self._clear_refresh_notification()
+        layout.addWidget(self.refresh_notification)
+
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Rechercher par date de résultat (ex: 12/04/2026)")
+        self.search_edit.setPlaceholderText("Filtrer résultat (ex: 12/04)")
+        self.search_edit.setMaximumWidth(240)
+        self.search_edit.setToolTip("Filtrer par date de résultat")
         self.search_edit.textChanged.connect(self._on_search_text_changed)
-        toolbar.addWidget(self.search_edit, 1)
+        toolbar.addWidget(self.search_edit, 0)
+        toolbar.addStretch(1)
 
         self.toggle_printed_btn = QPushButton("Afficher déjà imprimés")
         self.toggle_printed_btn.setCheckable(True)
@@ -161,13 +172,15 @@ class CertificateWorkQueueDialog(QDialog):
         self._table.setSelectionMode(QAbstractItemView.NoSelection)
         self._table.setAlternatingRowColors(False)
         self._table.verticalHeader().setVisible(False)
+        self._table.verticalHeader().setDefaultSectionSize(48)
+        self._table.verticalHeader().setMinimumSectionSize(48)
 
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(_COL_CERT_REF, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(_COL_RESULT_DATE, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(_COL_DESIGNATION, QHeaderView.Stretch)
         hdr.setSectionResizeMode(_COL_CLIENT, QHeaderView.Interactive)
-        self._table.setColumnWidth(_COL_CLIENT, 150)
+        self._table.setColumnWidth(_COL_CLIENT, 110)
         hdr.setSectionResizeMode(_COL_INVOICE, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(_COL_CC, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(_COL_CNC, QHeaderView.ResizeToContents)
@@ -184,8 +197,18 @@ class CertificateWorkQueueDialog(QDialog):
             _COL_DATE_CERT,
         ):
             hdr.setSectionResizeMode(col, QHeaderView.Interactive)
-            self._table.setColumnWidth(col, 88)
-        hdr.setSectionResizeMode(_COL_ACTIONS, QHeaderView.ResizeToContents)
+        self._table.setColumnWidth(_COL_QTE, 68)
+        self._table.setColumnWidth(_COL_QTE_ANALYSEE, 72)
+        self._table.setColumnWidth(_COL_NUM_LOT, 68)
+        self._table.setColumnWidth(_COL_NUM_ACTE, 78)
+        self._table.setColumnWidth(_COL_CLASSE, 62)
+        self._table.setColumnWidth(_COL_DATE_PROD, 82)
+        self._table.setColumnWidth(_COL_DATE_PEREMP, 82)
+        self._table.setColumnWidth(_COL_NUM_PRELEV, 62)
+        self._table.setColumnWidth(_COL_DATE_PV, 82)
+        self._table.setColumnWidth(_COL_DATE_CERT, 82)
+        hdr.setSectionResizeMode(_COL_ACTIONS, QHeaderView.Interactive)
+        self._table.setColumnWidth(_COL_ACTIONS, 172)
         layout.addWidget(self._table)
 
     def _apply_screen_geometry(self):
@@ -208,6 +231,29 @@ class CertificateWorkQueueDialog(QDialog):
         self.refresh_timer.setInterval(CERTIFICATE_REFRESH_INTERVAL_MS)
         self.refresh_timer.timeout.connect(self.refresh_certificate_entries_silently)
         self.refresh_timer.start()
+        self.refresh_notice_timer = QTimer(self)
+        self.refresh_notice_timer.setSingleShot(True)
+        self.refresh_notice_timer.timeout.connect(self._clear_refresh_notification)
+
+    def _show_refresh_notification(self, message: str):
+        self.refresh_notification.setText(message)
+        self.refresh_notification.setStyleSheet(
+            "background-color: #264b2f; color: white; border: 1px solid #4b8a58; border-radius: 4px; padding: 6px 10px;"
+        )
+        self.refresh_notice_timer.start(4000)
+
+    def _clear_refresh_notification(self):
+        self.refresh_notification.setText("")
+        self.refresh_notification.setStyleSheet(
+            "background: transparent; color: transparent; border: 1px solid transparent; padding: 6px 10px;"
+        )
+
+    @staticmethod
+    def _source_key(source: dict) -> tuple:
+        invoice_item_id = source.get("invoice_item_id")
+        if invoice_item_id is not None:
+            return ("item", int(invoice_item_id))
+        return ("legacy", source.get("invoice_id"), source.get("invoice_type"), source.get("product_id"))
 
     def _toggle_printed_view(self, checked: bool):
         self._show_printed = bool(checked)
@@ -258,12 +304,12 @@ class CertificateWorkQueueDialog(QDialog):
         sources = self._filter_sources(self.db_manager.get_certificate_work_queue(include_printed=self._show_printed))
         all_entries = self.db_manager.get_all_standard_certificate_entries()
         allowed_keys = {
-            (source.get("invoice_id"), source.get("invoice_type"), source.get("product_id"))
+            self._source_key(source)
             for source in sources
         }
         saved_entries = {}
         for entry in all_entries:
-            key = (entry.get("invoice_id"), entry.get("invoice_type"), entry.get("product_id"))
+            key = self._source_key(entry)
             if key not in allowed_keys:
                 continue
             saved_entries.setdefault(key, {})[entry.get("certificate_type")] = entry
@@ -278,7 +324,7 @@ class CertificateWorkQueueDialog(QDialog):
     def _build_entries_signature(cls, sources: list[dict], saved_entries: dict) -> tuple:
         signature = []
         for source in sources:
-            key = (source.get("invoice_id"), source.get("invoice_type"), source.get("product_id"))
+            key = cls._source_key(source)
             signature.append(
                 (
                     key,
@@ -323,11 +369,11 @@ class CertificateWorkQueueDialog(QDialog):
                     primary_sources.append(source)
 
             for source in primary_sources:
-                self._append_source_row(source, saved_entries.get((source.get("invoice_id"), source.get("invoice_type"), source.get("product_id")), {}))
+                self._append_source_row(source, saved_entries.get(self._source_key(source), {}))
             if primary_sources and cnc_sources:
                 self._insert_divider_row("Section CNC")
             for source in cnc_sources:
-                self._append_source_row(source, saved_entries.get((source.get("invoice_id"), source.get("invoice_type"), source.get("product_id")), {}))
+                self._append_source_row(source, saved_entries.get(self._source_key(source), {}))
 
     def _insert_group_header(self, title: str):
         row = self._table.rowCount()
@@ -359,7 +405,7 @@ class CertificateWorkQueueDialog(QDialog):
     def _append_source_row(self, source: dict, saved_entries: dict):
         row_index = self._table.rowCount()
         self._table.insertRow(row_index)
-        key = (source.get("invoice_id"), source.get("invoice_type"), source.get("product_id"))
+        key = self._source_key(source)
         base_defaults = {
             "num_act": str(source.get("line_num_act") or "").strip(),
             "ref_b_analyse": source.get("ref_b_analyse"),
@@ -384,15 +430,15 @@ class CertificateWorkQueueDialog(QDialog):
         invoice_item.setTextAlignment(Qt.AlignCenter)
         self._table.setItem(row_index, _COL_INVOICE, invoice_item)
 
-        qty_edit = self._make_line_edit("ex: 10 kg", 84)
-        qty_analysee_edit = self._make_line_edit("ex: 10 kg", 84)
-        num_lot_edit = self._make_line_edit("N° Lot", 84)
-        num_acte_edit = self._make_line_edit("N° Acte", 84)
+        qty_edit = self._make_line_edit("Qté", 66)
+        qty_analysee_edit = self._make_line_edit("Qté A.", 70)
+        num_lot_edit = self._make_line_edit("Lot", 66)
+        num_acte_edit = self._make_line_edit("Acte", 78)
         num_acte_edit.setText(base_defaults.get("num_act", ""))
-        classe_edit = self._make_line_edit("Classe", 80)
+        classe_edit = self._make_line_edit("Classe", 62)
         date_prod_edit = self._make_date_edit()
         date_peremp_edit = self._make_date_edit()
-        num_prelev_edit = self._make_line_edit("N° PRL", 80)
+        num_prelev_edit = self._make_line_edit("PRL", 62)
         date_pv_edit = self._make_date_edit()
         date_cert_edit = self._make_date_edit()
 
@@ -427,20 +473,52 @@ class CertificateWorkQueueDialog(QDialog):
         action_container = QWidget()
         action_layout = QHBoxLayout(action_container)
         action_layout.setContentsMargins(0, 0, 0, 0)
-        action_layout.setSpacing(6)
-        btn_save = QPushButton("Enregistrer")
+        action_layout.setSpacing(0)
+        btn_copy = QPushButton("Copier")
+        btn_paste = QPushButton("Coller")
+        btn_save = QPushButton("Sauver")
         btn_save.setObjectName("certificateSaveButton")
-        btn_print = QPushButton("Imprimer")
+        btn_print = QPushButton("Impr")
         btn_print.setObjectName("certificatePrintButton")
+        button_width = 78
+        button_height = 22
+        for action_button in (btn_copy, btn_paste, btn_save, btn_print):
+            action_button.setMinimumWidth(button_width)
+            action_button.setMaximumWidth(button_width)
+            action_button.setMinimumHeight(button_height)
+            action_button.setMaximumHeight(button_height)
+        action_container.setMinimumWidth((button_width * 2) + 2)
+        btn_copy.setToolTip("Copier la ligne")
+        btn_paste.setToolTip("Coller sur la ligne")
+        btn_save.setToolTip("Sauver")
+        btn_print.setToolTip("Imprimer")
+        btn_copy.clicked.connect(lambda _, current_key=key: self._on_row_copy_clicked(current_key))
+        btn_paste.clicked.connect(lambda _, current_key=key: self._on_row_paste_clicked(current_key))
         btn_save.clicked.connect(lambda _, current_key=key: self._on_row_save_clicked(current_key))
         btn_print.clicked.connect(lambda _, current_key=key: self._on_row_print_clicked(current_key))
-        action_layout.addWidget(btn_save)
-        action_layout.addWidget(btn_print)
+        action_grid = QVBoxLayout()
+        action_grid.setContentsMargins(0, 0, 0, 0)
+        action_grid.setSpacing(2)
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(2)
+        top_row.addWidget(btn_copy)
+        top_row.addWidget(btn_paste)
+        bottom_row = QHBoxLayout()
+        bottom_row.setContentsMargins(0, 0, 0, 0)
+        bottom_row.setSpacing(2)
+        bottom_row.addWidget(btn_save)
+        bottom_row.addWidget(btn_print)
+        action_grid.addLayout(top_row)
+        action_grid.addLayout(bottom_row)
+        action_layout.addLayout(action_grid)
         self._table.setCellWidget(row_index, _COL_ACTIONS, action_container)
+        self._table.setRowHeight(row_index, 48)
 
         row_data = {
             "key": key,
             "table_row": row_index,
+            "invoice_item_id": source.get("invoice_item_id"),
             "invoice_id": source.get("invoice_id"),
             "invoice_type": source.get("invoice_type") or "standard",
             "pid": source.get("product_id"),
@@ -462,6 +540,8 @@ class CertificateWorkQueueDialog(QDialog):
             "num_prelev_edit": num_prelev_edit,
             "date_pv_edit": date_pv_edit,
             "date_cert_edit": date_cert_edit,
+            "btn_copy": btn_copy,
+            "btn_paste": btn_paste,
             "btn_save": btn_save,
             "btn_print": btn_print,
             "cert_ref_item": cert_item,
@@ -522,8 +602,8 @@ class CertificateWorkQueueDialog(QDialog):
     @staticmethod
     def _make_date_edit() -> OptionalDateEdit:
         edit = OptionalDateEdit()
-        edit.setMinimumWidth(96)
-        edit.setMaximumWidth(96)
+        edit.setMinimumWidth(82)
+        edit.setMaximumWidth(82)
         return edit
 
     @staticmethod
@@ -595,6 +675,7 @@ class CertificateWorkQueueDialog(QDialog):
     def _make_line_edit(placeholder: str, width: int) -> QLineEdit:
         edit = QLineEdit()
         edit.setPlaceholderText(placeholder)
+        edit.setMinimumWidth(width)
         edit.setMaximumWidth(width)
         return edit
 
@@ -713,6 +794,7 @@ class CertificateWorkQueueDialog(QDialog):
         try:
             self._load_products()
             self._refresh_pending = False
+            self._show_refresh_notification("Les certificats ont été mis à jour automatiquement.")
         finally:
             self._is_refreshing = False
 
@@ -749,12 +831,14 @@ class CertificateWorkQueueDialog(QDialog):
             row["pid"],
             current_type,
             payload,
+            invoice_item_id=row.get("invoice_item_id"),
         )
         self.db_manager.replace_certificate_entry_type(
             row["invoice_id"],
             row["invoice_type"],
             row["pid"],
             current_type,
+            invoice_item_id=row.get("invoice_item_id"),
         )
         row["printed_at"] = payload.get("printed_at")
         self._last_entries_signature = ()
@@ -785,6 +869,7 @@ class CertificateWorkQueueDialog(QDialog):
                 source_type,
                 target_type,
                 source_payload,
+                invoice_item_id=row.get("invoice_item_id"),
             )
         except Exception as exc:
             self._restore_certificate_type_selection(row, source_type, source_payload)
@@ -852,6 +937,8 @@ class CertificateWorkQueueDialog(QDialog):
     def _set_row_action_state(self, row: dict):
         cert_type = row.get("active_cert_type")
         has_number = bool(cert_type and str((row["cached_entries"].get(cert_type) or {}).get("num_cert") or "").strip())
+        self._safe_set_enabled(row.get("btn_copy"), True)
+        self._safe_set_enabled(row.get("btn_paste"), self._copied_row_payload is not None)
         self._safe_set_enabled(row.get("btn_save"), cert_type is not None)
         self._safe_set_enabled(row.get("btn_print"), has_number)
         self._update_cert_ref_item(row)
@@ -910,6 +997,56 @@ class CertificateWorkQueueDialog(QDialog):
 
     def _on_row_save_clicked(self, row_key: tuple):
         self._save_row_certificate(row_key, require_confirmation=True, show_success=True)
+
+    def _copyable_row_payload(self, row_key: tuple):
+        row = self._get_row(row_key)
+        if row is None:
+            return None
+        payload = self._snapshot_row_values(row)
+        return {
+            "quantity": payload.get("quantity", ""),
+            "quantity_analysee": payload.get("quantity_analysee", ""),
+            "num_lot": payload.get("num_lot", ""),
+            "num_act": payload.get("num_act", ""),
+            "classe": payload.get("classe", ""),
+            "date_production": payload.get("date_production", ""),
+            "date_production_modified": payload.get("date_production_modified", False),
+            "date_peremption": payload.get("date_peremption", ""),
+            "date_peremption_modified": payload.get("date_peremption_modified", False),
+            "num_prl": payload.get("num_prl", ""),
+            "date_commerce": payload.get("date_commerce", ""),
+            "date_commerce_modified": payload.get("date_commerce_modified", False),
+            "date_cert": payload.get("date_cert", ""),
+            "date_cert_modified": payload.get("date_cert_modified", False),
+        }
+
+    def _on_row_copy_clicked(self, row_key: tuple):
+        self._copied_row_payload = self._copyable_row_payload(row_key)
+        for row_data in self._rows.values():
+            self._set_row_action_state(row_data)
+        self._show_refresh_notification("La ligne certificat a été copiée.")
+
+    def _on_row_paste_clicked(self, row_key: tuple):
+        if not self._copied_row_payload:
+            QMessageBox.information(self, "Coller", "Aucune ligne copiée.")
+            return
+        row = self._get_row(row_key)
+        if row is None:
+            return
+        cert_type = row.get("active_cert_type")
+        for current_type in ("CC", "CNC"):
+            current_payload = dict(row["cached_entries"].get(current_type) or self._default_entry_to_payload(row.get("base_defaults")))
+            current_payload.update(self._copied_row_payload)
+            current_payload["num_cert"] = str((row["cached_entries"].get(current_type) or {}).get("num_cert") or "")
+            current_payload["printed_at"] = str((row["cached_entries"].get(current_type) or {}).get("printed_at") or "")
+            row["cached_entries"][current_type] = current_payload
+
+        visible_payload = row["cached_entries"].get(cert_type) if cert_type else dict(self._copied_row_payload)
+        self._load_row_values(row, visible_payload)
+        if cert_type:
+            self._on_row_data_changed(row_key)
+        else:
+            self._set_row_action_state(row)
 
     def _row_extras(self, row_key: tuple) -> dict:
         row = self._get_row(row_key)
@@ -1008,13 +1145,22 @@ class CertificateWorkQueueDialog(QDialog):
         updated_payload = row["cached_entries"].get(cert_type) or {}
         updated_payload["printed_at"] = printed_at
         row["cached_entries"][cert_type] = updated_payload
-        self.db_manager.mark_certificate_entry_printed(row["invoice_id"], row["invoice_type"], row["pid"], cert_type, printed_at)
+        self.db_manager.mark_certificate_entry_printed(
+            row["invoice_id"],
+            row["invoice_type"],
+            row["pid"],
+            cert_type,
+            printed_at,
+            invoice_item_id=row.get("invoice_item_id"),
+        )
         self._last_entries_signature = ()
         self._load_products()
 
     def closeEvent(self, event):
         if hasattr(self, "refresh_timer"):
             self.refresh_timer.stop()
+        if hasattr(self, "refresh_notice_timer"):
+            self.refresh_notice_timer.stop()
         super().closeEvent(event)
 
 
