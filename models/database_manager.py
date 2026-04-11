@@ -4,13 +4,22 @@ from models.database.tables import Tables
 
 class DatabaseManager(Tables):
     table_name = ""
-    CURRENT_SCHEMA_VERSION = 6
+    CURRENT_SCHEMA_VERSION = 7
     SCHEMA_VERSION_KEY = "schema_version"
     CATALOG_UPDATED_AT_KEY = "catalog_updated_at"
+    CERTIFICATE_TYPES = ("CC", "CNC", "CP", "CNP", "CCON", "CNCON")
     CERTIFICATE_COUNTER_KEYS = {
         "CC": ("cert_cc_start", "cert_cc_last"),
         "CNC": ("cert_cnc_start", "cert_cnc_last"),
+        "CP": ("cert_cp_start", "cert_cp_last"),
+        "CNP": ("cert_cnp_start", "cert_cnp_last"),
+        "CCON": ("cert_ccon_start", "cert_ccon_last"),
+        "CNCON": ("cert_cncon_start", "cert_cncon_last"),
     }
+
+    @classmethod
+    def get_certificate_types(cls):
+        return cls.CERTIFICATE_TYPES
 
     @staticmethod
     def _normalize_num_act(value):
@@ -255,7 +264,9 @@ class DatabaseManager(Tables):
         self.cursor.execute("UPDATE users SET role = 'user' WHERE role IS NULL OR TRIM(role) = ''")
         self.cursor.execute("UPDATE users SET is_active = 1 WHERE is_active IS NULL")
 
+        self._ensure_certificate_counter_settings()
         self._backfill_certificate_invoice_item_ids()
+        self._migrate_certificate_entry_type_storage()
 
         if self.is_mysql:
             if not self.index_exists("uk_products_num_act"):
@@ -267,6 +278,104 @@ class DatabaseManager(Tables):
             self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_products_num_act ON products(num_act)")
             self._ensure_certificate_entry_scope_index()
             self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username ON users(username)")
+
+    def _ensure_certificate_counter_settings(self):
+        for start_key, last_key in self.CERTIFICATE_COUNTER_KEYS.values():
+            start_value = self.get_setting(start_key)
+            if start_value in (None, ""):
+                self.set_setting(start_key, 1)
+                start_value = 1
+            try:
+                normalized_start = max(int(start_value), 1)
+            except (TypeError, ValueError):
+                normalized_start = 1
+                self.set_setting(start_key, normalized_start)
+
+            last_value = self.get_setting(last_key)
+            if last_value in (None, ""):
+                self.set_setting(last_key, normalized_start - 1)
+
+    def _migrate_certificate_entry_type_storage(self):
+        if self.is_mysql:
+            self._migrate_mysql_certificate_types()
+            return
+        self._migrate_sqlite_certificate_types()
+
+    def _migrate_mysql_certificate_types(self):
+        enum_values = ", ".join(f"'{cert_type}'" for cert_type in self.CERTIFICATE_TYPES)
+        try:
+            self.cursor.execute(
+                f"ALTER TABLE certificate_entry MODIFY COLUMN certificate_type ENUM({enum_values}) NOT NULL"
+            )
+        except Exception:
+            return
+
+    def _migrate_sqlite_certificate_types(self):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='certificate_entry'"
+            )
+            row = cursor.fetchone()
+            create_sql = str(row[0] or "") if row else ""
+            if all(cert_type in create_sql for cert_type in self.CERTIFICATE_TYPES):
+                return
+
+            cursor.execute("PRAGMA foreign_keys = OFF")
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS certificate_entry__new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    invoice_id INTEGER NOT NULL,
+                    invoice_type TEXT NOT NULL CHECK (invoice_type IN ('standard', 'proforma')),
+                    product_id INTEGER NOT NULL,
+                    invoice_item_id INTEGER NULL,
+                    certificate_type TEXT NOT NULL CHECK (certificate_type IN ('CC', 'CNC', 'CP', 'CNP', 'CCON', 'CNCON')),
+                    quantity TEXT,
+                    quantity_analysee TEXT,
+                    num_lot TEXT,
+                    num_act TEXT,
+                    num_cert TEXT,
+                    classe TEXT,
+                    date_production TEXT,
+                    printed_at TEXT NULL,
+                    date_production_modified INTEGER,
+                    date_peremption TEXT,
+                    date_peremption_modified INTEGER,
+                    num_prl TEXT,
+                    date_commerce TEXT,
+                    date_commerce_modified INTEGER,
+                    date_cert TEXT,
+                    date_cert_modified INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+                )
+                """
+            )
+            cursor.execute(
+                """
+                INSERT INTO certificate_entry__new (
+                    id, invoice_id, invoice_type, product_id, invoice_item_id, certificate_type, quantity,
+                    quantity_analysee, num_lot, num_act, num_cert, classe, date_production, printed_at,
+                    date_production_modified, date_peremption, date_peremption_modified, num_prl,
+                    date_commerce, date_commerce_modified, date_cert, date_cert_modified, created_at
+                )
+                SELECT
+                    id, invoice_id, invoice_type, product_id, invoice_item_id, certificate_type, quantity,
+                    quantity_analysee, num_lot, num_act, num_cert, classe, date_production, printed_at,
+                    date_production_modified, date_peremption, date_peremption_modified, num_prl,
+                    date_commerce, date_commerce_modified, date_cert, date_cert_modified, created_at
+                FROM certificate_entry
+                """
+            )
+            cursor.execute("DROP TABLE certificate_entry")
+            cursor.execute("ALTER TABLE certificate_entry__new RENAME TO certificate_entry")
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uk_certificate_entry_scope ON certificate_entry(invoice_id, invoice_type, invoice_item_id, certificate_type)"
+            )
+            cursor.execute("PRAGMA foreign_keys = ON")
+        finally:
+            cursor.close()
 
     def fetch_all(self):
         cursor = self.conn.cursor(dictionary=True)
@@ -350,12 +459,14 @@ class DatabaseManager(Tables):
     def are_document_counters_initialized(self):
         cursor = self.conn.cursor()
         try:
+            required_keys = ["invoice_id_start", "ref_b_analyse_start", *[keys[0] for keys in self.CERTIFICATE_COUNTER_KEYS.values()]]
+            placeholders = ", ".join(["%s"] * len(required_keys))
             cursor.execute(
-                "SELECT COUNT(*) FROM app_settings WHERE setting_key IN (%s, %s, %s, %s)",
-                ("invoice_id_start", "ref_b_analyse_start", "cert_cc_start", "cert_cnc_start"),
+                f"SELECT COUNT(*) FROM app_settings WHERE setting_key IN ({placeholders})",
+                tuple(required_keys),
             )
             row = cursor.fetchone()
-            return bool(row and row[0] == 4)
+            return bool(row and row[0] == len(required_keys))
         finally:
             cursor.close()
 
@@ -399,12 +510,28 @@ class DatabaseManager(Tables):
     def touch_catalog(self):
         self.set_setting(self.CATALOG_UPDATED_AT_KEY, self._catalog_timestamp_now())
 
-    def initialize_document_counters(self, invoice_start, ref_start, cert_cc_start, cert_cnc_start):
+    def initialize_document_counters(
+        self,
+        invoice_start,
+        ref_start,
+        cert_cc_start,
+        cert_cnc_start,
+        cert_cp_start=1,
+        cert_cnp_start=1,
+        cert_ccon_start=1,
+        cert_cncon_start=1,
+    ):
         invoice_start = int(invoice_start)
         ref_start = int(ref_start)
-        cert_cc_start = int(cert_cc_start)
-        cert_cnc_start = int(cert_cnc_start)
-        if invoice_start < 1 or ref_start < 1 or cert_cc_start < 1 or cert_cnc_start < 1:
+        certificate_starts = {
+            "CC": int(cert_cc_start),
+            "CNC": int(cert_cnc_start),
+            "CP": int(cert_cp_start),
+            "CNP": int(cert_cnp_start),
+            "CCON": int(cert_ccon_start),
+            "CNCON": int(cert_cncon_start),
+        }
+        if invoice_start < 1 or ref_start < 1 or any(value < 1 for value in certificate_starts.values()):
             raise ValueError("Les valeurs d'initialisation doivent être supérieures ou égales à 1.")
         if self.has_invoice_history():
             raise ValueError(
@@ -415,10 +542,10 @@ class DatabaseManager(Tables):
             self.set_setting("ref_b_analyse_start", ref_start)
             self.set_setting("ref_b_analyse_last", ref_start - 1)
             self.set_setting("invoice_id_start", invoice_start)
-            self.set_setting("cert_cc_start", cert_cc_start)
-            self.set_setting("cert_cc_last", cert_cc_start - 1)
-            self.set_setting("cert_cnc_start", cert_cnc_start)
-            self.set_setting("cert_cnc_last", cert_cnc_start - 1)
+            for cert_type, start_value in certificate_starts.items():
+                start_key, last_key = self._get_certificate_counter_keys(cert_type)
+                self.set_setting(start_key, start_value)
+                self.set_setting(last_key, start_value - 1)
 
     @classmethod
     def _get_certificate_counter_keys(cls, cert_type: str):
@@ -1058,6 +1185,13 @@ class DatabaseManager(Tables):
         finally:
             cursor.close()
 
+    @staticmethod
+    def _certificate_entry_scope_key(entry):
+        invoice_item_id = entry.get("invoice_item_id")
+        if invoice_item_id is not None:
+            return ("item", int(invoice_item_id))
+        return ("legacy", entry.get("invoice_id"), entry.get("invoice_type"), entry.get("product_id"))
+
     def save_certificate_entry(self, invoice_id, invoice_type, product_id, certificate_type, payload, invoice_item_id=None):
         normalized_payload = self._normalize_certificate_payload(payload)
 
@@ -1187,30 +1321,32 @@ class DatabaseManager(Tables):
             cursor.execute(
                 "SELECT ic.id AS invoice_item_id, ic.invoice_id, ic.invoice_type, ic.product_id, ic.result_date, ic.ref_b_analyse, ic.num_act AS line_num_act, "
                 "si.company_name, si.address, si.stat, si.nif, si.date_issue, si.date_result AS invoice_date_result, si.product_ref, si.resp, "
-                "p.product_name, "
-                "ce_cc.num_cert AS cc_num_cert, ce_cc.printed_at AS cc_printed_at, "
-                "ce_cnc.num_cert AS cnc_num_cert, ce_cnc.printed_at AS cnc_printed_at "
+                "p.product_name "
                 "FROM invoice_client ic "
                 "INNER JOIN standard_invoice si ON si.id = ic.invoice_id AND ic.invoice_type = 'standard' "
                 "INNER JOIN products p ON p.id = ic.product_id "
-                "LEFT JOIN certificate_entry ce_cc ON ce_cc.invoice_id = ic.invoice_id AND ce_cc.invoice_type = ic.invoice_type AND ce_cc.invoice_item_id = ic.id AND ce_cc.certificate_type = 'CC' "
-                "LEFT JOIN certificate_entry ce_cnc ON ce_cnc.invoice_id = ic.invoice_id AND ce_cnc.invoice_type = ic.invoice_type AND ce_cnc.invoice_item_id = ic.id AND ce_cnc.certificate_type = 'CNC' "
                 "ORDER BY CASE WHEN TRIM(COALESCE(ic.result_date, '')) = '' THEN 1 ELSE 0 END ASC, ic.result_date ASC, si.id ASC, p.product_name ASC, ic.id ASC"
             )
             rows = cursor.fetchall() or []
+            entry_rows = self.get_all_standard_certificate_entries()
+            entries_by_scope = {}
+            for entry in entry_rows:
+                entries_by_scope.setdefault(self._certificate_entry_scope_key(entry), {})[entry.get("certificate_type")] = entry
             queue = []
             for row in rows:
+                scoped_entries = entries_by_scope.get(self._certificate_entry_scope_key(row), {})
                 active_certificate_type = None
                 active_num_cert = ""
                 printed_at = None
-                if str(row.get("cnc_num_cert") or "").strip() or row.get("cnc_printed_at"):
-                    active_certificate_type = "CNC"
-                    active_num_cert = str(row.get("cnc_num_cert") or "").strip()
-                    printed_at = row.get("cnc_printed_at")
-                elif str(row.get("cc_num_cert") or "").strip() or row.get("cc_printed_at"):
-                    active_certificate_type = "CC"
-                    active_num_cert = str(row.get("cc_num_cert") or "").strip()
-                    printed_at = row.get("cc_printed_at")
+                for cert_type in self.get_certificate_types():
+                    entry = scoped_entries.get(cert_type)
+                    if not entry:
+                        continue
+                    if str(entry.get("num_cert") or "").strip() or entry.get("printed_at"):
+                        active_certificate_type = cert_type
+                        active_num_cert = str(entry.get("num_cert") or "").strip()
+                        printed_at = entry.get("printed_at")
+                        break
 
                 row["active_certificate_type"] = active_certificate_type
                 row["active_num_cert"] = active_num_cert
@@ -1239,8 +1375,10 @@ class DatabaseManager(Tables):
                 )
 
     def replace_certificate_entry_type(self, invoice_id, invoice_type, product_id, active_certificate_type, invoice_item_id=None):
-        opposite_type = "CNC" if active_certificate_type == "CC" else "CC"
-        self.delete_certificate_entry(invoice_id, invoice_type, product_id, opposite_type, invoice_item_id=invoice_item_id)
+        for certificate_type in self.get_certificate_types():
+            if certificate_type == active_certificate_type:
+                continue
+            self.delete_certificate_entry(invoice_id, invoice_type, product_id, certificate_type, invoice_item_id=invoice_item_id)
     
     def get_standard_invoice_by_id(self, invoice_id):
         self.cursor.execute("SELECT * FROM standard_invoice WHERE id=%s", (invoice_id,))

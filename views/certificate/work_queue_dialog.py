@@ -1,8 +1,8 @@
-from datetime import datetime, timezone
-
 from PySide6.QtCore import Qt, QDate, QSignalBlocker, QTimer, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QCheckBox,
     QDateEdit,
     QDialog,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from utils.path_utils import resolve_resource_path
+from models.database_manager import DatabaseManager
 from views.certificate.certificate_printer import CertificatePrinter
 
 
@@ -28,20 +29,19 @@ _COL_RESULT_DATE = 1
 _COL_DESIGNATION = 2
 _COL_CLIENT = 3
 _COL_INVOICE = 4
-_COL_CC = 5
-_COL_CNC = 6
-_COL_QTE = 7
-_COL_QTE_ANALYSEE = 8
-_COL_NUM_LOT = 9
-_COL_NUM_ACTE = 10
-_COL_CLASSE = 11
-_COL_DATE_PROD = 12
-_COL_DATE_PEREMP = 13
-_COL_NUM_PRELEV = 14
-_COL_DATE_PV = 15
-_COL_DATE_CERT = 16
-_COL_ACTIONS = 17
-_COL_COUNT = 18
+_COL_TYPE = 5
+_COL_QTE = 6
+_COL_QTE_ANALYSEE = 7
+_COL_NUM_LOT = 8
+_COL_NUM_ACTE = 9
+_COL_CLASSE = 10
+_COL_DATE_PROD = 11
+_COL_DATE_PEREMP = 12
+_COL_NUM_PRELEV = 13
+_COL_DATE_PV = 14
+_COL_DATE_CERT = 15
+_COL_ACTIONS = 16
+_COL_COUNT = 17
 
 _HEADERS = [
     "N° cert",
@@ -49,8 +49,7 @@ _HEADERS = [
     "Désignation",
     "Client",
     "N° facture",
-    "CC",
-    "CNC",
+    "Type",
     "Quantité *",
     "Qté Analysée *",
     "N° Lot *",
@@ -108,6 +107,7 @@ class CertificateWorkQueueDialog(QDialog):
     def __init__(self, parent, db_manager):
         super().__init__(parent)
         self.db_manager = db_manager
+        self._certificate_types = tuple(self.db_manager.get_certificate_types())
         self._rows: dict[tuple, dict] = {}
         self._printer = CertificatePrinter(self)
         self._refresh_pending = False
@@ -116,6 +116,7 @@ class CertificateWorkQueueDialog(QDialog):
         self._show_printed = False
         self._search_text = ""
         self._copied_row_payload: dict | None = None
+        self.active_edit_row: tuple | None = None
 
         self.setWindowTitle("Certificats")
         self.setModal(True)
@@ -168,6 +169,7 @@ class CertificateWorkQueueDialog(QDialog):
         self._table = QTableWidget()
         self._table.setColumnCount(_COL_COUNT)
         self._table.setHorizontalHeaderLabels(_HEADERS)
+        self._table.setColumnHidden(_COL_RESULT_DATE, True)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setSelectionMode(QAbstractItemView.NoSelection)
         self._table.setAlternatingRowColors(False)
@@ -180,10 +182,10 @@ class CertificateWorkQueueDialog(QDialog):
         hdr.setSectionResizeMode(_COL_RESULT_DATE, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(_COL_DESIGNATION, QHeaderView.Stretch)
         hdr.setSectionResizeMode(_COL_CLIENT, QHeaderView.Interactive)
-        self._table.setColumnWidth(_COL_CLIENT, 110)
+        self._table.setColumnWidth(_COL_CLIENT, 82)
         hdr.setSectionResizeMode(_COL_INVOICE, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(_COL_CC, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(_COL_CNC, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(_COL_TYPE, QHeaderView.Interactive)
+        self._table.setColumnWidth(_COL_TYPE, 260)
         for col in (
             _COL_QTE,
             _COL_QTE_ANALYSEE,
@@ -208,7 +210,7 @@ class CertificateWorkQueueDialog(QDialog):
         self._table.setColumnWidth(_COL_DATE_PV, 82)
         self._table.setColumnWidth(_COL_DATE_CERT, 82)
         hdr.setSectionResizeMode(_COL_ACTIONS, QHeaderView.Interactive)
-        self._table.setColumnWidth(_COL_ACTIONS, 172)
+        self._table.setColumnWidth(_COL_ACTIONS, 194)
         layout.addWidget(self._table)
 
     def _apply_screen_geometry(self):
@@ -229,8 +231,6 @@ class CertificateWorkQueueDialog(QDialog):
     def _init_refresh_timer(self):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(CERTIFICATE_REFRESH_INTERVAL_MS)
-        self.refresh_timer.timeout.connect(self.refresh_certificate_entries_silently)
-        self.refresh_timer.start()
         self.refresh_notice_timer = QTimer(self)
         self.refresh_notice_timer.setSingleShot(True)
         self.refresh_notice_timer.timeout.connect(self._clear_refresh_notification)
@@ -334,8 +334,9 @@ class CertificateWorkQueueDialog(QDialog):
                     str(source.get("printed_at") or ""),
                 )
             )
-            for cert_type in ("CC", "CNC"):
-                signature.append((key, cert_type, cls._payload_signature(cls._entry_to_payload(saved_entries.get(key, {}).get(cert_type), {}))))
+            saved_entries_by_type = saved_entries.get(key, {})
+            for cert_type in DatabaseManager.get_certificate_types():
+                signature.append((key, cert_type, cls._payload_signature(cls._entry_to_payload(saved_entries_by_type.get(cert_type), {}))))
         return tuple(signature)
 
     def _load_products(self):
@@ -359,22 +360,72 @@ class CertificateWorkQueueDialog(QDialog):
 
         for raw_key, group_data in groups.items():
             self._insert_group_header(group_data["title"])
-            group_sources = group_data["sources"]
-            primary_sources = []
-            cnc_sources = []
-            for source in group_sources:
-                if str(source.get("active_certificate_type") or "").upper() == "CNC":
-                    cnc_sources.append(source)
-                else:
-                    primary_sources.append(source)
-
-            for source in primary_sources:
-                self._append_source_row(source, saved_entries.get(self._source_key(source), {}))
-            if primary_sources and cnc_sources:
-                self._insert_divider_row("Section CNC")
-            for source in cnc_sources:
+            for source in group_data["sources"]:
                 self._append_source_row(source, saved_entries.get(self._source_key(source), {}))
 
+    @classmethod
+    def _safe_set_stylesheet(cls, widget, stylesheet: str):
+        if not cls._widget_is_alive(widget):
+            return
+        try:
+            widget.setStyleSheet(stylesheet)
+        except RuntimeError:
+            return
+
+    def _row_has_saved_certificate(self, row: dict) -> bool:
+        for cert_type in self._certificate_types:
+            payload = row["cached_entries"].get(cert_type) or {}
+            if str(payload.get("num_cert") or "").strip():
+                return True
+        return False
+
+    def _apply_saved_row_style(self, row: dict):
+        row_index = row.get("table_row")
+        if row_index is None:
+            return
+
+        is_saved = self._row_has_saved_certificate(row)
+        item_bg = QColor("#E8F6EE") if is_saved else QColor("white")
+        item_fg = QColor("#134B33") if is_saved else QColor("black")
+        input_style = (
+            "QLineEdit, QDateEdit { background-color: #F4FFF8; color: #134B33; border: 2px solid #2E8B57; border-radius: 3px; }"
+            if is_saved
+            else ""
+        )
+        button_style = (
+            "QPushButton { background-color: #DDF3E5; color: #134B33; border: 2px solid #2E8B57; border-radius: 4px; font-weight: 600; }"
+            if is_saved
+            else ""
+        )
+        preview_button_style = (
+            "QPushButton { background-color: #DDF3E5; color: #134B33; border: none; border-radius: 4px; font-weight: 600; }"
+            if is_saved
+            else "QPushButton { border: none; }"
+        )
+
+        for col in (_COL_CERT_REF, _COL_RESULT_DATE, _COL_DESIGNATION, _COL_CLIENT, _COL_INVOICE):
+            item = self._table.item(row_index, col)
+            if item is not None:
+                item.setBackground(item_bg)
+                item.setForeground(item_fg)
+
+        for widget_name in (
+            "qty_edit",
+            "qty_analysee_edit",
+            "num_lot_edit",
+            "num_acte_edit",
+            "classe_edit",
+            "date_prod_edit",
+            "date_peremp_edit",
+            "num_prelev_edit",
+            "date_pv_edit",
+            "date_cert_edit",
+        ):
+            self._safe_set_stylesheet(row.get(widget_name), input_style)
+
+        for widget_name in ("btn_copy", "btn_paste", "btn_save"):
+            self._safe_set_stylesheet(row.get(widget_name), button_style)
+        self._safe_set_stylesheet(row.get("btn_print"), preview_button_style)
     def _insert_group_header(self, title: str):
         row = self._table.rowCount()
         self._table.insertRow(row)
@@ -453,22 +504,18 @@ class CertificateWorkQueueDialog(QDialog):
         self._table.setCellWidget(row_index, _COL_DATE_PV, date_pv_edit)
         self._table.setCellWidget(row_index, _COL_DATE_CERT, date_cert_edit)
 
-        cc_container = self._make_centered_checkbox()
-        cnc_container = self._make_centered_checkbox()
-        actual_cc = cc_container.findChild(QCheckBox)
-        actual_cnc = cnc_container.findChild(QCheckBox)
+        type_container, type_group, type_checkboxes = self._make_type_selector(key)
         check_icon = resolve_resource_path("images/checkbox-check-white.svg").as_posix()
         checkbox_style = (
             "QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid white; background: transparent; }"
             f"QCheckBox::indicator:checked {{ image: url({check_icon}); border: 1px solid white; background: transparent; }}"
         )
-        actual_cc.setStyleSheet(checkbox_style)
-        actual_cnc.setStyleSheet(checkbox_style)
-        _wire_exclusive(actual_cc, actual_cnc)
-        actual_cc.toggled.connect(lambda checked, current_key=key: checked and self._on_certificate_type_selected(current_key, "CC"))
-        actual_cnc.toggled.connect(lambda checked, current_key=key: checked and self._on_certificate_type_selected(current_key, "CNC"))
-        self._table.setCellWidget(row_index, _COL_CC, cc_container)
-        self._table.setCellWidget(row_index, _COL_CNC, cnc_container)
+        for cert_type, checkbox in type_checkboxes.items():
+            checkbox.setStyleSheet(checkbox_style)
+            checkbox.toggled.connect(
+                lambda checked, current_key=key, selected_type=cert_type: checked and self._on_certificate_type_selected(current_key, selected_type)
+            )
+        self._table.setCellWidget(row_index, _COL_TYPE, type_container)
 
         action_container = QWidget()
         action_layout = QHBoxLayout(action_container)
@@ -476,25 +523,25 @@ class CertificateWorkQueueDialog(QDialog):
         action_layout.setSpacing(0)
         btn_copy = QPushButton("Copier")
         btn_paste = QPushButton("Coller")
-        btn_save = QPushButton("Sauver")
-        btn_save.setObjectName("certificateSaveButton")
-        btn_print = QPushButton("Impr")
+        btn_save = QPushButton("Modifier")
+        btn_save.setObjectName("certificateEditButton")
+        btn_print = QPushButton("Aperçu")
         btn_print.setObjectName("certificatePrintButton")
-        button_width = 78
-        button_height = 22
+        button_width = 86
+        button_height = 24
         for action_button in (btn_copy, btn_paste, btn_save, btn_print):
             action_button.setMinimumWidth(button_width)
             action_button.setMaximumWidth(button_width)
             action_button.setMinimumHeight(button_height)
             action_button.setMaximumHeight(button_height)
-        action_container.setMinimumWidth((button_width * 2) + 2)
+        action_container.setMinimumWidth((button_width * 2) + 8)
         btn_copy.setToolTip("Copier la ligne")
         btn_paste.setToolTip("Coller sur la ligne")
-        btn_save.setToolTip("Sauver")
-        btn_print.setToolTip("Imprimer")
+        btn_save.setToolTip("Modifier la ligne")
+        btn_print.setToolTip("Aperçu du certificat")
         btn_copy.clicked.connect(lambda _, current_key=key: self._on_row_copy_clicked(current_key))
         btn_paste.clicked.connect(lambda _, current_key=key: self._on_row_paste_clicked(current_key))
-        btn_save.clicked.connect(lambda _, current_key=key: self._on_row_save_clicked(current_key))
+        btn_save.clicked.connect(lambda _, current_key=key: self._on_row_edit_clicked(current_key))
         btn_print.clicked.connect(lambda _, current_key=key: self._on_row_print_clicked(current_key))
         action_grid = QVBoxLayout()
         action_grid.setContentsMargins(0, 0, 0, 0)
@@ -513,7 +560,7 @@ class CertificateWorkQueueDialog(QDialog):
         action_grid.addLayout(bottom_row)
         action_layout.addLayout(action_grid)
         self._table.setCellWidget(row_index, _COL_ACTIONS, action_container)
-        self._table.setRowHeight(row_index, 48)
+        self._table.setRowHeight(row_index, 56)
 
         row_data = {
             "key": key,
@@ -528,8 +575,8 @@ class CertificateWorkQueueDialog(QDialog):
             "display_result_date": self._format_iso_date(source.get("result_date")),
             "header_data": self._build_header_data(source),
             "printed_at": source.get("printed_at"),
-            "cc_cb": actual_cc,
-            "cnc_cb": actual_cnc,
+            "type_group": type_group,
+            "type_checkboxes": type_checkboxes,
             "qty_edit": qty_edit,
             "qty_analysee_edit": qty_analysee_edit,
             "num_lot_edit": num_lot_edit,
@@ -548,10 +595,12 @@ class CertificateWorkQueueDialog(QDialog):
             "ref_b_analyse": base_defaults.get("ref_b_analyse"),
             "base_defaults": dict(base_defaults),
             "cached_entries": {
-                "CC": self._entry_to_payload(saved_entries.get("CC"), base_defaults),
-                "CNC": self._entry_to_payload(saved_entries.get("CNC"), base_defaults),
+                cert_type: self._entry_to_payload(saved_entries.get(cert_type), base_defaults)
+                for cert_type in self._certificate_types
             },
             "active_cert_type": None,
+            "persisted_cert_type": None,
+            "is_editing": False,
             "loading": False,
         }
         self._rows[key] = row_data
@@ -574,36 +623,54 @@ class CertificateWorkQueueDialog(QDialog):
         date_pv_edit.cleared.connect(lambda current_key=key: self._on_row_data_changed(current_key))
         date_cert_edit.cleared.connect(lambda current_key=key: self._on_row_data_changed(current_key))
 
-        initial_type = None
-        if saved_entries.get("CNC"):
-            initial_type = "CNC"
-        elif saved_entries.get("CC"):
-            initial_type = "CC"
+        initial_type = str(source.get("active_certificate_type") or "").strip().upper() or None
+        if initial_type not in self._certificate_types:
+            initial_type = next((cert_type for cert_type in self._certificate_types if saved_entries.get(cert_type)), None)
         if initial_type:
-            blockers = [QSignalBlocker(actual_cc), QSignalBlocker(actual_cnc)]
+            blockers = [QSignalBlocker(checkbox) for checkbox in type_checkboxes.values()]
             try:
-                actual_cc.setChecked(initial_type == "CC")
-                actual_cnc.setChecked(initial_type == "CNC")
+                type_checkboxes[initial_type].setChecked(True)
             finally:
                 del blockers
             row_data["active_cert_type"] = initial_type
+            row_data["persisted_cert_type"] = initial_type
             self._load_row_values(row_data, row_data["cached_entries"].get(initial_type) or self._default_entry_to_payload(base_defaults))
+        self._set_row_inputs_read_only(row_data, True)
         self._set_row_action_state(row_data)
 
-    @staticmethod
-    def _make_centered_checkbox() -> QWidget:
+    def _make_type_selector(self, row_key: tuple):
         container = QWidget()
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(8)
         layout.setAlignment(Qt.AlignCenter)
-        layout.addWidget(QCheckBox())
-        return container
+        group = QButtonGroup(container)
+        group.setExclusive(True)
+        checkboxes = {}
+        for cert_type in self._certificate_types:
+            wrapper = QWidget()
+            wrapper_layout = QVBoxLayout(wrapper)
+            wrapper_layout.setContentsMargins(0, 0, 0, 0)
+            wrapper_layout.setSpacing(1)
+            wrapper_layout.setAlignment(Qt.AlignCenter)
+            label = QLabel(cert_type)
+            label.setAlignment(Qt.AlignCenter)
+            label.setStyleSheet("font-size: 10px; font-weight: 600;")
+            checkbox = QCheckBox()
+            checkbox.setEnabled(False)
+            checkboxes[cert_type] = checkbox
+            group.addButton(checkbox)
+            wrapper_layout.addWidget(label)
+            wrapper_layout.addWidget(checkbox)
+            layout.addWidget(wrapper)
+        return container, group, checkboxes
 
     @staticmethod
     def _make_date_edit() -> OptionalDateEdit:
         edit = OptionalDateEdit()
         edit.setMinimumWidth(82)
         edit.setMaximumWidth(82)
+        edit.setReadOnly(True)
         return edit
 
     @staticmethod
@@ -677,7 +744,52 @@ class CertificateWorkQueueDialog(QDialog):
         edit.setPlaceholderText(placeholder)
         edit.setMinimumWidth(width)
         edit.setMaximumWidth(width)
+        edit.setReadOnly(True)
         return edit
+
+    @staticmethod
+    def _editable_widgets(row: dict):
+        return (
+            row["qty_edit"],
+            row["qty_analysee_edit"],
+            row["num_lot_edit"],
+            row["num_acte_edit"],
+            row["classe_edit"],
+            row["date_prod_edit"],
+            row["date_peremp_edit"],
+            row["num_prelev_edit"],
+            row["date_pv_edit"],
+            row["date_cert_edit"],
+        )
+
+    def _set_row_inputs_read_only(self, row: dict, read_only: bool):
+        for widget in self._editable_widgets(row):
+            if isinstance(widget, QLineEdit):
+                widget.setReadOnly(read_only)
+                continue
+            widget.setReadOnly(read_only)
+            line_edit = widget.lineEdit()
+            if line_edit is not None:
+                line_edit.setReadOnly(read_only)
+        for checkbox in row.get("type_checkboxes", {}).values():
+            self._safe_set_enabled(checkbox, not read_only)
+
+    def _enter_row_edit_mode(self, row: dict):
+        if self.active_edit_row is not None and self.active_edit_row != row["key"]:
+            return False
+        self.active_edit_row = row["key"]
+        row["is_editing"] = True
+        self._set_row_inputs_read_only(row, False)
+        row["qty_edit"].setFocus()
+        self._set_row_action_state(row)
+        return True
+
+    def _exit_row_edit_mode(self, row: dict):
+        if self.active_edit_row == row["key"]:
+            self.active_edit_row = None
+        row["is_editing"] = False
+        self._set_row_inputs_read_only(row, True)
+        self._set_row_action_state(row)
 
     @classmethod
     def _default_entry_to_payload(cls, base_defaults: dict | None = None) -> dict:
@@ -758,20 +870,7 @@ class CertificateWorkQueueDialog(QDialog):
             row["loading"] = False
 
     def _row_has_focus(self, row: dict) -> bool:
-        widgets = (
-            row["qty_edit"],
-            row["qty_analysee_edit"],
-            row["num_lot_edit"],
-            row["num_acte_edit"],
-            row["classe_edit"],
-            row["date_prod_edit"],
-            row["date_peremp_edit"],
-            row["num_prelev_edit"],
-            row["date_pv_edit"],
-            row["date_cert_edit"],
-            row["cc_cb"],
-            row["cnc_cb"],
-        )
+        widgets = [*self._editable_widgets(row), *row.get("type_checkboxes", {}).values()]
         return any(self._safe_has_focus(widget) for widget in widgets)
 
     def _row_is_being_edited(self, row: dict) -> bool:
@@ -841,19 +940,29 @@ class CertificateWorkQueueDialog(QDialog):
             invoice_item_id=row.get("invoice_item_id"),
         )
         row["printed_at"] = payload.get("printed_at")
+        row["persisted_cert_type"] = current_type
+        for other_type in self._certificate_types:
+            if other_type == current_type:
+                continue
+            other_payload = dict(row["cached_entries"].get(other_type) or self._default_entry_to_payload(row.get("base_defaults")))
+            other_payload["num_cert"] = ""
+            other_payload["printed_at"] = ""
+            row["cached_entries"][other_type] = other_payload
         self._last_entries_signature = ()
 
     def _reset_certificate_cache(self, row: dict, cert_type: str):
         row["cached_entries"][cert_type] = self._default_entry_to_payload(row.get("base_defaults"))
 
     def _restore_certificate_type_selection(self, row: dict, cert_type: str, payload: dict):
-        blockers = [QSignalBlocker(row["cc_cb"]), QSignalBlocker(row["cnc_cb"])]
+        blockers = [QSignalBlocker(checkbox) for checkbox in row.get("type_checkboxes", {}).values()]
         try:
-            row["cc_cb"].setChecked(cert_type == "CC")
-            row["cnc_cb"].setChecked(cert_type == "CNC")
+            checkbox = row.get("type_checkboxes", {}).get(cert_type)
+            if checkbox is not None:
+                checkbox.setChecked(True)
         finally:
             del blockers
         row["active_cert_type"] = cert_type
+        row["persisted_cert_type"] = cert_type
         row["cached_entries"][cert_type] = payload
         self._load_row_values(row, payload)
         self._set_row_action_state(row)
@@ -882,13 +991,12 @@ class CertificateWorkQueueDialog(QDialog):
         migrated_payload["printed_at"] = ""
         self._reset_certificate_cache(row, source_type)
         row["active_cert_type"] = target_type
+        row["persisted_cert_type"] = target_type
         row["cached_entries"][target_type] = migrated_payload
         row["printed_at"] = ""
         self._load_row_values(row, migrated_payload)
         self._last_entries_signature = ()
         self._set_row_action_state(row)
-        if self._refresh_pending:
-            self.refresh_certificate_entries_silently()
         return True
 
     def _on_certificate_type_selected(self, row_key: tuple, cert_type: str):
@@ -897,16 +1005,11 @@ class CertificateWorkQueueDialog(QDialog):
             return
         previous_type = row.get("active_cert_type")
         if previous_type and previous_type != cert_type:
-            previous_payload = self._snapshot_row_values(row, previous_type)
-            if str(previous_payload.get("num_cert") or "").strip():
-                self._switch_numbered_certificate_type(row, previous_type, cert_type)
-                return
-            self._reset_certificate_cache(row, previous_type)
+            row["cached_entries"][previous_type] = self._snapshot_row_values(row, previous_type)
         row["active_cert_type"] = cert_type
         payload = row["cached_entries"].get(cert_type) or self._default_entry_to_payload({"num_act": row["num_acte_edit"].text().strip()})
         self._load_row_values(row, payload)
         row["cached_entries"][cert_type] = self._snapshot_row_values(row, cert_type)
-        self._persist_row_state(row, cert_type)
         self._set_row_action_state(row)
 
     def _on_row_data_changed(self, row_key: tuple):
@@ -915,14 +1018,13 @@ class CertificateWorkQueueDialog(QDialog):
             return
         if row.get("loading"):
             return
+        if not row.get("is_editing"):
+            return
         cert_type = row.get("active_cert_type")
         if not cert_type:
             return
         row["cached_entries"][cert_type] = self._snapshot_row_values(row, cert_type)
-        self._persist_row_state(row, cert_type)
         self._set_row_action_state(row)
-        if self._refresh_pending:
-            self.refresh_certificate_entries_silently()
 
     def _update_cert_ref_item(self, row: dict):
         cert_type = row.get("active_cert_type")
@@ -939,20 +1041,24 @@ class CertificateWorkQueueDialog(QDialog):
         has_number = bool(cert_type and str((row["cached_entries"].get(cert_type) or {}).get("num_cert") or "").strip())
         self._safe_set_enabled(row.get("btn_copy"), True)
         self._safe_set_enabled(row.get("btn_paste"), self._copied_row_payload is not None)
-        self._safe_set_enabled(row.get("btn_save"), cert_type is not None)
-        self._safe_set_enabled(row.get("btn_print"), has_number)
+        self._safe_set_enabled(row.get("btn_save"), True)
+        self._safe_set_enabled(row.get("btn_print"), has_number and not row.get("is_editing"))
+        row.get("btn_save").setText("Sauver" if row.get("is_editing") else "Modifier")
         self._update_cert_ref_item(row)
+        self._apply_saved_row_style(row)
+        if row.get("is_editing"):
+            self._safe_set_tooltip(row.get("btn_save"), "Sauver les modifications de la ligne certificat.")
+            self._safe_set_tooltip(row.get("btn_print"), "Terminez par Sauver avant d'ouvrir l'aperçu.")
+            return
+        self._safe_set_tooltip(row.get("btn_save"), "Déverrouiller la ligne pour modification.")
         if cert_type is None:
-            self._safe_set_tooltip(row.get("btn_save"), "Sélectionnez CC ou CNC avant d'enregistrer.")
-            self._safe_set_tooltip(row.get("btn_print"), "Enregistrez d'abord un certificat pour pouvoir imprimer.")
+            self._safe_set_tooltip(row.get("btn_print"), "Enregistrez d'abord un certificat pour pouvoir l'ouvrir en aperçu.")
             return
         if has_number:
             num_cert = str((row["cached_entries"].get(cert_type) or {}).get("num_cert") or "").strip()
-            self._safe_set_tooltip(row.get("btn_save"), f"N° certificat attribué : {num_cert}")
-            self._safe_set_tooltip(row.get("btn_print"), f"Imprimer le certificat {cert_type} n° {num_cert}.")
+            self._safe_set_tooltip(row.get("btn_print"), f"Aperçu du certificat {cert_type} n° {num_cert}.")
             return
-        self._safe_set_tooltip(row.get("btn_save"), "Enregistrer pour attribuer automatiquement le N° certificat.")
-        self._safe_set_tooltip(row.get("btn_print"), "Enregistrez d'abord le certificat pour attribuer son numéro.")
+        self._safe_set_tooltip(row.get("btn_print"), "Enregistrez d'abord le certificat pour attribuer son numéro avant aperçu.")
 
     def _confirm_certificate_number_lock(self, row: dict, cert_type: str) -> bool:
         reply = QMessageBox.question(
@@ -960,7 +1066,7 @@ class CertificateWorkQueueDialog(QDialog):
             "Enregistrer le certificat",
             (
                 f"Voulez-vous vraiment enregistrer le certificat {cert_type} pour « {row['name']} » ?\n\n"
-                "Le N° certificat sera attribué automatiquement. Si vous changez plus tard entre CC et CNC, "
+                "Le N° certificat sera attribué automatiquement. Si vous changez plus tard de type, "
                 "la numérotation sera réajustée automatiquement pour garder une suite cohérente."
             ),
             QMessageBox.Yes | QMessageBox.No,
@@ -974,18 +1080,29 @@ class CertificateWorkQueueDialog(QDialog):
             return False
         cert_type = self._selected_certificate_type(row)
         if cert_type is None:
-            QMessageBox.warning(self, "Type manquant", f"Veuillez sélectionner CC ou CNC pour « {row['name']} ».")
+            QMessageBox.warning(self, "Type manquant", f"Veuillez sélectionner un type de certificat pour « {row['name']} ».")
             return False
         if not self._validate_required_fields(row_key):
             return False
         payload = self._snapshot_row_values(row, cert_type)
-        is_first_allocation = not payload.get("num_cert")
-        if is_first_allocation:
+        previous_type = row.get("persisted_cert_type")
+        previous_payload = row["cached_entries"].get(previous_type, {}) if previous_type else {}
+
+        if previous_type and previous_type != cert_type and str(previous_payload.get("num_cert") or "").strip():
             if require_confirmation and not self._confirm_certificate_number_lock(row, cert_type):
                 return False
-            payload["num_cert"] = str(self.db_manager.allocate_next_cert_number(cert_type))
-        row["cached_entries"][cert_type] = payload
-        self._persist_row_state(row, cert_type)
+            if not self._switch_numbered_certificate_type(row, previous_type, cert_type):
+                return False
+            payload = row["cached_entries"].get(cert_type) or payload
+        else:
+            is_first_allocation = not payload.get("num_cert")
+            if is_first_allocation:
+                if require_confirmation and not self._confirm_certificate_number_lock(row, cert_type):
+                    return False
+                payload["num_cert"] = str(self.db_manager.allocate_next_cert_number(cert_type))
+            row["cached_entries"][cert_type] = payload
+            self._persist_row_state(row, cert_type)
+
         self._set_row_action_state(row)
         if show_success:
             QMessageBox.information(
@@ -995,8 +1112,18 @@ class CertificateWorkQueueDialog(QDialog):
             )
         return True
 
-    def _on_row_save_clicked(self, row_key: tuple):
-        self._save_row_certificate(row_key, require_confirmation=True, show_success=True)
+    def _on_row_edit_clicked(self, row_key: tuple):
+        row = self._get_row(row_key)
+        if row is None:
+            return
+        if not row.get("is_editing"):
+            self._enter_row_edit_mode(row)
+            return
+        if not self._save_row_certificate(row_key, require_confirmation=True, show_success=True):
+            return
+        self._exit_row_edit_mode(row)
+        self._load_products()
+        self._show_refresh_notification("Certificat sauvegardé.")
 
     def _copyable_row_payload(self, row_key: tuple):
         row = self._get_row(row_key)
@@ -1034,7 +1161,7 @@ class CertificateWorkQueueDialog(QDialog):
         if row is None:
             return
         cert_type = row.get("active_cert_type")
-        for current_type in ("CC", "CNC"):
+        for current_type in self._certificate_types:
             current_payload = dict(row["cached_entries"].get(current_type) or self._default_entry_to_payload(row.get("base_defaults")))
             current_payload.update(self._copied_row_payload)
             current_payload["num_cert"] = str((row["cached_entries"].get(current_type) or {}).get("num_cert") or "")
@@ -1043,7 +1170,7 @@ class CertificateWorkQueueDialog(QDialog):
 
         visible_payload = row["cached_entries"].get(cert_type) if cert_type else dict(self._copied_row_payload)
         self._load_row_values(row, visible_payload)
-        if cert_type:
+        if cert_type and row.get("is_editing"):
             self._on_row_data_changed(row_key)
         else:
             self._set_row_action_state(row)
@@ -1110,19 +1237,21 @@ class CertificateWorkQueueDialog(QDialog):
 
     @staticmethod
     def _selected_certificate_type(row: dict) -> str | None:
-        if row["cc_cb"].isChecked():
-            return "CC"
-        if row["cnc_cb"].isChecked():
-            return "CNC"
+        for cert_type, checkbox in row.get("type_checkboxes", {}).items():
+            if checkbox.isChecked():
+                return cert_type
         return None
 
     def _on_row_print_clicked(self, row_key: tuple):
         row = self._get_row(row_key)
         if row is None:
             return
+        if row.get("is_editing"):
+            QMessageBox.information(self, "Sauvegarde requise", f"Veuillez d'abord sauver la ligne de « {row['name']} » avant l'aperçu.")
+            return
         cert_type = self._selected_certificate_type(row)
         if cert_type is None:
-            QMessageBox.warning(self, "Type manquant", f"Veuillez sélectionner CC ou CNC pour « {row['name']} ».")
+            QMessageBox.warning(self, "Type manquant", f"Veuillez sélectionner un type de certificat pour « {row['name']} ».")
             return
         payload = row["cached_entries"].get(cert_type) or {}
         if not str(payload.get("num_cert") or "").strip():
@@ -1132,29 +1261,12 @@ class CertificateWorkQueueDialog(QDialog):
                 f"Veuillez d'abord enregistrer le certificat {cert_type} pour « {row['name']} » afin d'attribuer le N° certificat.",
             )
             return
-        if not self._save_row_certificate(row_key, require_confirmation=False, show_success=False):
-            return
-        success = self._printer.print_certificates(
+        success = self._printer.preview_certificates(
             row["header_data"],
             [(row["pid"], row["name"], cert_type, self._row_extras(row_key))],
         )
         if not success:
             return
-        printed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        row["printed_at"] = printed_at
-        updated_payload = row["cached_entries"].get(cert_type) or {}
-        updated_payload["printed_at"] = printed_at
-        row["cached_entries"][cert_type] = updated_payload
-        self.db_manager.mark_certificate_entry_printed(
-            row["invoice_id"],
-            row["invoice_type"],
-            row["pid"],
-            cert_type,
-            printed_at,
-            invoice_item_id=row.get("invoice_item_id"),
-        )
-        self._last_entries_signature = ()
-        self._load_products()
 
     def closeEvent(self, event):
         if hasattr(self, "refresh_timer"):
@@ -1162,20 +1274,3 @@ class CertificateWorkQueueDialog(QDialog):
         if hasattr(self, "refresh_notice_timer"):
             self.refresh_notice_timer.stop()
         super().closeEvent(event)
-
-
-def _wire_exclusive(cb_a: QCheckBox, cb_b: QCheckBox):
-    def on_a(checked, other=cb_b):
-        if checked:
-            other.blockSignals(True)
-            other.setChecked(False)
-            other.blockSignals(False)
-
-    def on_b(checked, other=cb_a):
-        if checked:
-            other.blockSignals(True)
-            other.setChecked(False)
-            other.blockSignals(False)
-
-    cb_a.toggled.connect(on_a)
-    cb_b.toggled.connect(on_b)

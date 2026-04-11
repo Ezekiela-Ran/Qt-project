@@ -7,6 +7,8 @@ L'impression utilise QPrinter / QPrintDialog (même approche que InvoicePrinter)
 from datetime import date
 import os
 from pathlib import Path
+import platform
+import subprocess
 import tempfile
 from html import escape
 from urllib.parse import unquote, urlparse
@@ -19,9 +21,37 @@ from PySide6.QtPdf import QPdfDocument
 from utils.path_utils import resolve_resource_path
 
 
-_TITLES = {
-    "CC":  "CERTIFICAT DE CONSOMMABILITÉ",
-    "CNC": "CERTIFICAT DE NON CONSOMMABILITÉ",
+_CERTIFICATE_TEXTS = {
+    "CC": {
+        "title": "CERTIFICAT DE CONSOMMABILITÉ",
+        "declaration": "Est déclaré consommable à la consommation humaine",
+        "closing": "Le présent certificat de consommabilité est délivré pour servir et valoir ce que de droit.",
+    },
+    "CNC": {
+        "title": "CERTIFICAT DE NON CONSOMMABILITÉ",
+        "declaration": "Est déclaré non consommable à la consommation humaine",
+        "closing": "Le présent certificat de non consommabilité est délivré pour servir et valoir ce que de droit.",
+    },
+    "CP": {
+        "title": "CERTIFICAT DE POTABILITÉ",
+        "declaration": "Est déclaré potable",
+        "closing": "Le présent certificat de potabilité est délivré pour servir et valoir ce que de droit.",
+    },
+    "CNP": {
+        "title": "CERTIFICAT DE NON POTABILITÉ",
+        "declaration": "Est déclaré non potable",
+        "closing": "Le présent certificat de non potabilité est délivré pour servir et valoir ce que de droit.",
+    },
+    "CCON": {
+        "title": "CERTIFICAT DE CONFORMABILITÉ",
+        "declaration": "Est déclaré conforme",
+        "closing": "Le présent certificat de conformabilité est délivré pour servir et valoir ce que de droit.",
+    },
+    "CNCON": {
+        "title": "CERTIFICAT DE NON CONFORMABILITÉ",
+        "declaration": "Est déclaré non conforme",
+        "closing": "Le présent certificat de non conformabilité est délivré pour servir et valoir ce que de droit.",
+    },
 }
 
 
@@ -33,6 +63,22 @@ class CertificatePrinter:
 
     def __init__(self, parent_widget):
         self.parent = parent_widget
+
+    @staticmethod
+    def _certificate_text(cert_type: str) -> dict:
+        normalized_type = str(cert_type or "").strip().upper()
+        return _CERTIFICATE_TEXTS[normalized_type]
+
+    @staticmethod
+    def _open_file_with_default_app(path: str):
+        system_name = platform.system()
+        if system_name == "Windows":
+            os.startfile(path)
+            return
+        if system_name == "Darwin":
+            subprocess.Popen(["open", path])
+            return
+        subprocess.Popen(["xdg-open", path])
 
     # ------------------------------------------------------------------
     # Ressources
@@ -173,7 +219,8 @@ class CertificatePrinter:
         if extras is None:
             extras = {}
 
-        title      = escape(_TITLES[cert_type])
+        text_config = self._certificate_text(cert_type)
+        title      = escape(text_config["title"])
         desig      = escape(product_name)
         page_break = "auto" if is_last else "always"
 
@@ -194,7 +241,8 @@ class CertificatePrinter:
         invoice_number    = escape(str(extras.get("invoice_number", "") or ""))
 
         analyse_sentence = self._build_analysis_sentence(analyse_raw)
-        result_text = "consommable" if cert_type == "CC" else "non consommable"
+        declaration_text = escape(text_config["declaration"])
+        closing_text = escape(text_config["closing"])
         year_two_digits = date.today().strftime("%y")
         header_number = f"N°/{year_two_digits}MSANP/SG/ACSSQDA/{cert_type}"
         if num_cert:
@@ -293,11 +341,11 @@ class CertificatePrinter:
   </table>
 
   <p style="margin-top:8pt;font-size:11.2pt;font-weight:bold;line-height:1.3;">
-    Est déclaré {result_text} à la consommation humaine
+        {declaration_text}
   </p>
 
   <p style="margin-top:5pt;font-size:10.8pt;font-weight:bold;line-height:1.3;">
-    En foi de quoi, ce certificat est délivré pour servir et valoir ce que de droit.
+        {closing_text}
   </p>
 
   <p style="text-align:right;margin-top:8pt;font-size:10.8pt;font-weight:bold;">
@@ -569,7 +617,8 @@ class CertificatePrinter:
 
                 story.append(build_header_table())
                 story.append(Spacer(1, 6))
-                story.append(Paragraph(_TITLES[cert_type], title_style))
+                text_config = self._certificate_text(cert_type)
+                story.append(Paragraph(text_config["title"], title_style))
                 story.append(Paragraph(header_number, title_sub_style))
                 story.append(Spacer(1, 8))
                 story.append(
@@ -582,10 +631,9 @@ class CertificatePrinter:
                 story.append(build_value_table(product_name, cert_type, extras))
                 story.append(Spacer(1, 10))
 
-                result_text = "consommable" if cert_type == "CC" else "non consommable"
-                story.append(Paragraph(f"Est déclaré {result_text} à la consommation humaine", declaration_style))
+                story.append(Paragraph(text_config["declaration"], declaration_style))
                 story.append(Spacer(1, 7))
-                story.append(Paragraph("En foi de quoi, ce certificat est délivré pour servir et valoir ce que de droit.", declaration_style))
+                story.append(Paragraph(text_config["closing"], declaration_style))
                 story.append(Spacer(1, 12))
                 story.append(Paragraph(f"Fait à Antananarivo, le {escape(certificate_date)}", date_style))
                 story.append(Spacer(1, 12))
@@ -649,6 +697,18 @@ class CertificatePrinter:
     # ------------------------------------------------------------------
     # Impression
     # ------------------------------------------------------------------
+
+    def preview_certificates(self, form, assignments: list[tuple]):
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                tmp_path = tmp_file.name
+
+            self._generate_pdf_with_reportlab(form, assignments, tmp_path)
+            self._open_file_with_default_app(tmp_path)
+            return True
+        except Exception as e:
+            QMessageBox.critical(self.parent, "Erreur", f"Erreur lors de l'aperçu du certificat : {e}")
+            return False
 
     def print_certificates(self, form, assignments: list[tuple]):
         """Imprime avec choix du périphérique tout en conservant le rendu ReportLab identique sur tous les OS."""

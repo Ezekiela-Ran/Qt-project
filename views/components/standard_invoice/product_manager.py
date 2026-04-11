@@ -357,7 +357,7 @@ class ProductManager(QWidget):
             physico_edit = QLineEdit(self.format_number(physico)); physico_edit.setReadOnly(True)
             toxico_edit = QLineEdit(self.format_number(toxico)); toxico_edit.setReadOnly(True)
             micro_edit = QLineEdit(self.format_number(micro)); micro_edit.setReadOnly(True)
-            subtotal_edit = QLineEdit(self.format_number(subtotal)); subtotal_edit.setReadOnly(True)
+            subtotal_edit = QLineEdit(self.format_number(self._compute_display_subtotal(subtotal, default_quantity))); subtotal_edit.setReadOnly(True)
 
             # Set validators for integer fields
             physico_edit.setValidator(int_validator)
@@ -375,7 +375,7 @@ class ProductManager(QWidget):
             physico_edit = QLineEdit(self.format_number(physico)); physico_edit.setReadOnly(True)
             toxico_edit = QLineEdit(self.format_number(toxico)); toxico_edit.setReadOnly(True)
             micro_edit = QLineEdit(self.format_number(micro)); micro_edit.setReadOnly(True)
-            subtotal_edit = QLineEdit(self.format_number(subtotal)); subtotal_edit.setReadOnly(True)
+            subtotal_edit = QLineEdit(self.format_number(self._compute_display_subtotal(subtotal, default_quantity))); subtotal_edit.setReadOnly(True)
 
             # Set validators for integer fields
             physico_edit.setValidator(int_validator)
@@ -389,6 +389,7 @@ class ProductManager(QWidget):
             self.product_table.setCellWidget(row, self._col("subtotal"), subtotal_edit)
 
         # Connect automatic recalculation et mise à jour DB sur modification des champs relevant du calcul.
+        quantity_edit.textChanged.connect(lambda _: self.on_price_component_changed(row))
         physico_edit.textChanged.connect(lambda _: self.on_price_component_changed(row))
         toxico_edit.textChanged.connect(lambda _: self.on_price_component_changed(row))
         micro_edit.textChanged.connect(lambda _: self.on_price_component_changed(row))
@@ -426,6 +427,7 @@ class ProductManager(QWidget):
             selected_quantity = self.selected_quantities.get(pid)
             if selected_quantity is not None:
                 quantity_edit.setText(str(selected_quantity))
+                self._set_row_subtotal_display(row, subtotal)
             self.apply_selection_style(row)
 
     def toggle_edit(self, row):
@@ -445,7 +447,7 @@ class ProductManager(QWidget):
             editable_cols = [self._col("quantity"), self._col("duration"), self._col("ref"), self._col("num_act"), self._col("physico"), self._col("toxico"), self._col("micro")]
             amount_cols = [self._col("physico"), self._col("toxico"), self._col("micro")]
             focus_col = self._col("quantity")
-        else:  # proforma
+        else:
             widget_col = self._col("quantity")
             btn_col = self._col("edit")
             editable_cols = [self._col("quantity"), self._col("duration"), self._col("physico"), self._col("toxico"), self._col("micro")]
@@ -454,11 +456,9 @@ class ProductManager(QWidget):
         widget = self.product_table.cellWidget(row, widget_col)
         btn = self.product_table.cellWidget(row, btn_col)
         if widget.isReadOnly():
-            # Start edit (subtotal reste non modifiable)
             self.active_edit_row = row
             btn.setText("Sauver")
             self._begin_designation_edit(row)
-            # Remove display formatting while editing amount fields.
             for col in amount_cols:
                 amount_widget = self.product_table.cellWidget(row, col)
                 if amount_widget:
@@ -466,26 +466,25 @@ class ProductManager(QWidget):
             for col in editable_cols:
                 self.product_table.cellWidget(row, col).setReadOnly(False)
             self.product_table.cellWidget(row, focus_col).setFocus()
-        else:
-            # Save edit
-            if self.invoice_type == "standard" and not self.validate_num_act_row(row):
-                self.product_table.cellWidget(row, self._col("num_act")).setFocus()
-                return
-            if not self._save_designation_edit(row, pid):
-                return
-            self.on_price_component_changed(row)
-            self._persist_row_changes(row, pid)
-            btn.setText("Modifier")
-            for col in amount_cols:
-                amount_widget = self.product_table.cellWidget(row, col)
-                if amount_widget:
-                    self._set_line_edit_text(amount_widget, self.format_number(amount_widget.text()))
-            for col in editable_cols:
-                self.product_table.cellWidget(row, col).setReadOnly(True)
-            self.active_edit_row = None
-            if self.selected_products.get(pid, False):
-                self.selection_changed.emit()
-            self._flush_pending_catalog_reload()
+            return
+        if self.invoice_type == "standard" and not self.validate_num_act_row(row):
+            self.product_table.cellWidget(row, self._col("num_act")).setFocus()
+            return
+        if not self._save_designation_edit(row, pid):
+            return
+        self.on_price_component_changed(row)
+        self._persist_row_changes(row, pid)
+        btn.setText("Modifier")
+        for col in amount_cols:
+            amount_widget = self.product_table.cellWidget(row, col)
+            if amount_widget:
+                self._set_line_edit_text(amount_widget, self.format_number(amount_widget.text()))
+        for col in editable_cols:
+            self.product_table.cellWidget(row, col).setReadOnly(True)
+        self.active_edit_row = None
+        if self.selected_products.get(pid, False):
+            self.selection_changed.emit()
+        self._flush_pending_catalog_reload()
 
     def toggle_edit_from_sender(self):
         if not self.can_manage_catalog:
@@ -589,7 +588,7 @@ class ProductManager(QWidget):
         self._set_line_edit_text(physico_widget, self.format_number(product["physico"]))
         self._set_line_edit_text(toxico_widget, self.format_number(product["toxico"]))
         self._set_line_edit_text(micro_widget, self.format_number(product["micro"]))
-        self._set_line_edit_text(subtotal_widget, self.format_number(product["subtotal"]))
+        self._set_row_subtotal_display(row, product["subtotal"])
 
     def _persist_row_changes(self, row, pid):
         if self.invoice_type == "standard":
@@ -624,12 +623,11 @@ class ProductManager(QWidget):
         physico_widget = self.product_table.cellWidget(row, physico_col)
         toxico_widget = self.product_table.cellWidget(row, toxico_col)
         micro_widget = self.product_table.cellWidget(row, micro_col)
-        subtotal_widget = self.product_table.cellWidget(row, subtotal_col)
 
         physico = int(self.parse_number(physico_widget.text() if physico_widget else 0))
         toxico = int(self.parse_number(toxico_widget.text() if toxico_widget else 0))
         micro = int(self.parse_number(micro_widget.text() if micro_widget else 0))
-        subtotal = int(self.parse_number(subtotal_widget.text() if subtotal_widget else 0))
+        subtotal = physico + toxico + micro
 
         self.product_service.update_product(
             pid,
@@ -716,6 +714,21 @@ class ProductManager(QWidget):
             return float(cleaned)
         except (TypeError, ValueError):
             return 0.0
+
+    def _compute_display_subtotal(self, unit_subtotal, quantity):
+        qty = self._parse_positive_int(quantity, default=1, minimum=1)
+        return self.parse_number(unit_subtotal) * qty
+
+    def _current_row_quantity(self, row):
+        quantity_widget = self.product_table.cellWidget(row, self._col("quantity"))
+        return self._parse_positive_int(quantity_widget.text() if quantity_widget else 1, default=1, minimum=1)
+
+    def _set_row_subtotal_display(self, row, unit_subtotal):
+        subtotal_widget = self.product_table.cellWidget(row, self._col("subtotal"))
+        if subtotal_widget is None:
+            return
+        display_subtotal = self._compute_display_subtotal(unit_subtotal, self._current_row_quantity(row))
+        self._set_line_edit_text(subtotal_widget, self.format_number(display_subtotal))
 
     def _display_num_act(self, value):
         if value is None:
@@ -846,16 +859,13 @@ class ProductManager(QWidget):
         physico_widget = self.product_table.cellWidget(row, physico_col)
         toxico_widget = self.product_table.cellWidget(row, toxico_col)
         micro_widget = self.product_table.cellWidget(row, micro_col)
-        subtotal_widget = self.product_table.cellWidget(row, subtotal_col)
 
         physico = self.parse_number(physico_widget.text())
         toxico = self.parse_number(toxico_widget.text())
         micro = self.parse_number(micro_widget.text())
 
         subtotal_value = physico + toxico + micro
-        subtotal_text = self.format_number(subtotal_value)
-
-        self._set_line_edit_text(subtotal_widget, subtotal_text)
+        self._set_row_subtotal_display(row, subtotal_value)
 
         pid = item.data(Qt.UserRole)
         quantity_widget = self.product_table.cellWidget(row, self._col("quantity"))
@@ -1096,6 +1106,9 @@ class ProductManager(QWidget):
                     quantity_widget = self.product_table.cellWidget(row, self._col("quantity"))
                     if quantity_widget is not None:
                         quantity_widget.setText(str(self.selected_quantities.get(pid, 1)))
+                    product = self.product_service.get_product_by_id(pid)
+                    if product:
+                        self._set_row_subtotal_display(row, product.get("subtotal", 0))
                     if self.invoice_type == "standard":
                         num_act_widget = self.product_table.cellWidget(row, self._col("num_act"))
                         if num_act_widget is not None:
@@ -1273,6 +1286,11 @@ class ProductManager(QWidget):
             quantity_widget = self.product_table.cellWidget(row, self._col("quantity"))
             if quantity_widget:
                 quantity_widget.setText("1")
+            item = self.product_table.item(row, 0)
+            if item:
+                product = self.product_service.get_product_by_id(item.data(Qt.UserRole))
+                if product:
+                    self._set_row_subtotal_display(row, product.get("subtotal", 0))
         self.enable_form_fields()
         # Renumber UI refs to reflect cleared selections
         self._refresh_preview_refs()
