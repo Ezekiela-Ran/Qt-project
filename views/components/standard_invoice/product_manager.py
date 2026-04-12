@@ -32,14 +32,13 @@ class ProductManager(QWidget):
     PROFORMA_COLUMNS = {
         "designation": 0,
         "quantity": 1,
-        "duration": 2,
-        "physico": 3,
-        "toxico": 4,
-        "micro": 5,
-        "subtotal": 6,
-        "delete": 7,
-        "edit": 8,
-        "select": 9,
+        "physico": 2,
+        "toxico": 3,
+        "micro": 4,
+        "subtotal": 5,
+        "delete": 6,
+        "edit": 7,
+        "select": 8,
     }
     
     def __init__(self, product_service, invoice_type="standard"):
@@ -106,8 +105,8 @@ class ProductManager(QWidget):
 
         self.product_table = QTableWidget()
         if self.invoice_type == "proforma":
-            self.product_table.setColumnCount(10)
-            self.product_table.setHorizontalHeaderLabels(["Désignation", "Nombre", "Durée", "Physico", "Toxico", "Micro", "Sous-total", "Suppr", "Modif", "Choisir"])
+            self.product_table.setColumnCount(9)
+            self.product_table.setHorizontalHeaderLabels(["Désignation", "Nombre", "Physico", "Toxico", "Micro", "Sous-total", "Suppr", "Modif", "Choisir"])
         else:
             self.product_table.setColumnCount(12)
             self.product_table.setHorizontalHeaderLabels(["Désignation", "Nombre", "Durée", "Ref.b.analyse", "N° Acte", "Physico", "Toxico", "Micro", "Sous-total", "Suppr", "Modif", "Choisir"])
@@ -148,29 +147,57 @@ class ProductManager(QWidget):
         self.catalog_refresh_timer.start()
 
     def _apply_role_permissions(self):
-        self.add_type_btn.setVisible(self.can_manage_catalog)
-        self.edit_type_btn.setVisible(self.can_manage_catalog)
-        self.del_type_btn.setVisible(self.can_manage_catalog)
-        self.add_product_btn.setVisible(self.can_manage_catalog)
-        self.product_table.setColumnHidden(self._col("delete"), not self.can_manage_catalog)
-        self.product_table.setColumnHidden(self._col("edit"), not self.can_manage_catalog)
+        self.add_type_btn.setVisible(self._can_manage_types())
+        self.edit_type_btn.setVisible(self._can_manage_types())
+        self.del_type_btn.setVisible(self._can_manage_types())
+        self.add_product_btn.setVisible(self._can_manage_product_catalog())
+        self.product_table.setColumnHidden(self._col("delete"), not self._can_manage_product_catalog())
+        self.product_table.setColumnHidden(self._col("edit"), not self._can_use_row_edit())
 
     def _col(self, name):
         if self.invoice_type == "standard":
             return self.STANDARD_COLUMNS[name]
         return self.PROFORMA_COLUMNS[name]
 
+    def _has_duration_column(self):
+        return self.invoice_type == "standard"
+
+    def _catalog_management_locked(self):
+        return self.invoice_type == "proforma"
+
+    def _can_manage_types(self):
+        return self.can_manage_catalog and not self._catalog_management_locked()
+
+    def _can_manage_product_catalog(self):
+        return self.can_manage_catalog and not self._catalog_management_locked()
+
+    def _can_use_row_edit(self):
+        return self.can_manage_catalog or self.invoice_type == "proforma"
+
+    def _is_quantity_only_row_edit(self):
+        return self.invoice_type == "proforma" and not self.can_manage_catalog
+
+    def _editable_row_columns(self):
+        if self.invoice_type == "standard":
+            return [self._col("quantity"), self._col("duration"), self._col("ref"), self._col("num_act"), self._col("physico"), self._col("toxico"), self._col("micro")]
+        if self._is_quantity_only_row_edit():
+            return [self._col("quantity")]
+        return [self._col("quantity"), self._col("physico"), self._col("toxico"), self._col("micro")]
+
     def _configure_product_table_columns(self):
         header = self.product_table.horizontalHeader()
         header.setSectionResizeMode(self._col("designation"), QHeaderView.Interactive)
-        compact_columns = ["quantity", "duration", "physico", "toxico", "micro", "subtotal"]
+        compact_columns = ["quantity", "physico", "toxico", "micro", "subtotal"]
+        if self._has_duration_column():
+            compact_columns.insert(1, "duration")
         if self.invoice_type == "standard":
-            compact_columns.insert(2, "num_act")
+            compact_columns.insert(3, "num_act")
         for column_name in compact_columns:
             header.setSectionResizeMode(self._col(column_name), QHeaderView.Interactive)
         self.product_table.setColumnWidth(self._col("designation"), 220)
         self.product_table.setColumnWidth(self._col("quantity"), 58)
-        self.product_table.setColumnWidth(self._col("duration"), 58)
+        if self._has_duration_column():
+            self.product_table.setColumnWidth(self._col("duration"), 58)
         if self.invoice_type == "standard":
             self.product_table.setColumnWidth(self._col("num_act"), 110)
         self.product_table.setColumnWidth(self._col("physico"), 76)
@@ -226,7 +253,7 @@ class ProductManager(QWidget):
         return False
 
     def add_type(self):
-        if not self.can_manage_catalog:
+        if not self._can_manage_types():
             return
         name, ok = QInputDialog.getText(self, "Nouveau Type", "Nom du type:")
         if ok and name:
@@ -234,7 +261,7 @@ class ProductManager(QWidget):
             self._after_local_catalog_change(selected_type_id=new_type_id)
 
     def edit_type(self):
-        if not self.can_manage_catalog:
+        if not self._can_manage_types():
             return
         item = self.type_list.currentItem()
         if not item:
@@ -250,7 +277,7 @@ class ProductManager(QWidget):
             self._after_local_catalog_change(selected_type_id=tid)
 
     def del_type(self):
-        if not self.can_manage_catalog:
+        if not self._can_manage_types():
             return
         item = self.type_list.currentItem()
         if not item:
@@ -264,7 +291,7 @@ class ProductManager(QWidget):
             QMessageBox.warning(self, "Suppression impossible", str(e))
 
     def add_product(self):
-        if not self.can_manage_catalog:
+        if not self._can_manage_product_catalog():
             return
         if self.loaded_record_locked:
             return
@@ -303,6 +330,22 @@ class ProductManager(QWidget):
         except (TypeError, ValueError):
             return max(int(default), minimum)
 
+    @staticmethod
+    def _normalize_designation_key(value):
+        return " ".join(str(value or "").split()).strip().casefold()
+
+    def _designation_key_for_pid(self, pid):
+        row = self._find_row_for_product(pid)
+        if row >= 0:
+            item = self.product_table.item(row, self._col("designation"))
+            if item is not None:
+                return self._normalize_designation_key(item.text())
+
+        product = self.product_service.get_product_by_id(pid)
+        if not product:
+            return ""
+        return self._normalize_designation_key(product.get("product_name"))
+
     def _split_series_values(self, value):
         if isinstance(value, list):
             return [str(item).strip() for item in value if str(item or "").strip()]
@@ -312,13 +355,20 @@ class ProductManager(QWidget):
         values = [self._normalize_num_act(chunk) for chunk in self._split_series_values(value)]
         values = [item for item in values if item]
         normalized = values[:quantity]
+        if len(normalized) == 1 and quantity > 1:
+            normalized = normalized * quantity
         while len(normalized) < quantity:
             normalized.append(None)
         return normalized
 
     def _format_num_act_series(self, values):
         if isinstance(values, list):
-            return "; ".join(str(value).strip() for value in values if str(value or "").strip())
+            compact_values = [str(value).strip() for value in values if str(value or "").strip()]
+            if not compact_values:
+                return ""
+            if len(set(compact_values)) == 1:
+                return compact_values[0]
+            return "; ".join(compact_values)
         return self._display_num_act(values)
 
     def _format_ref_preview(self, refs):
@@ -344,13 +394,13 @@ class ProductManager(QWidget):
 
         int_validator = QIntValidator(0, 999999)
         quantity_edit = QLineEdit(str(self._parse_positive_int(default_quantity, default=1, minimum=1))); quantity_edit.setReadOnly(True)
-        duration_edit = QLineEdit(str(self._parse_positive_int(duration_days, default=0, minimum=0))); duration_edit.setReadOnly(True)
         quantity_edit.setValidator(QIntValidator(1, 999))
-        duration_edit.setValidator(int_validator)
         self.product_table.setCellWidget(row, self._col("quantity"), quantity_edit)
-        self.product_table.setCellWidget(row, self._col("duration"), duration_edit)
 
         if self.invoice_type == "standard":
+            duration_edit = QLineEdit(str(self._parse_positive_int(duration_days, default=0, minimum=0))); duration_edit.setReadOnly(True)
+            duration_edit.setValidator(int_validator)
+            self.product_table.setCellWidget(row, self._col("duration"), duration_edit)
             ref_edit = QLineEdit(str(ref)); ref_edit.setReadOnly(True)
             self.product_table.setCellWidget(row, self._col("ref"), ref_edit)
             num_act_edit = QLineEdit(self._display_num_act(num_act)); num_act_edit.setReadOnly(True)
@@ -411,10 +461,10 @@ class ProductManager(QWidget):
 
         if not self.can_manage_catalog:
             btn_del.setVisible(False)
-            btn_mod.setVisible(False)
+            btn_mod.setVisible(self._can_use_row_edit())
 
         btn_del.setEnabled(self.can_manage_catalog and not self.loaded_record_locked)
-        btn_mod.setEnabled(self.can_manage_catalog)
+        btn_mod.setEnabled(self._can_use_row_edit())
         btn_sel.setEnabled(not self.loaded_record_locked)
 
         # Réappliquer style si déjà sélectionné
@@ -431,63 +481,95 @@ class ProductManager(QWidget):
             self.apply_selection_style(row)
 
     def toggle_edit(self, row):
-        if not self.can_manage_catalog:
-            return
+        if not self._can_use_row_edit():
+            return False
         if self.active_edit_row is not None and self.active_edit_row != row:
-            return
+            return False
         designation_item = self.product_table.item(row, 0)
         if designation_item is None:
-            return
+            return False
         pid = designation_item.data(Qt.UserRole)
         if pid is None:
-            return
+            return False
         if self.invoice_type == "standard":
             widget_col = self._col("num_act")
             btn_col = self._col("edit")
-            editable_cols = [self._col("quantity"), self._col("duration"), self._col("ref"), self._col("num_act"), self._col("physico"), self._col("toxico"), self._col("micro")]
             amount_cols = [self._col("physico"), self._col("toxico"), self._col("micro")]
             focus_col = self._col("quantity")
         else:
             widget_col = self._col("quantity")
             btn_col = self._col("edit")
-            editable_cols = [self._col("quantity"), self._col("duration"), self._col("physico"), self._col("toxico"), self._col("micro")]
             amount_cols = [self._col("physico"), self._col("toxico"), self._col("micro")]
             focus_col = self._col("quantity")
+        editable_cols = self._editable_row_columns()
         widget = self.product_table.cellWidget(row, widget_col)
         btn = self.product_table.cellWidget(row, btn_col)
         if widget.isReadOnly():
             self.active_edit_row = row
             btn.setText("Sauver")
-            self._begin_designation_edit(row)
-            for col in amount_cols:
-                amount_widget = self.product_table.cellWidget(row, col)
-                if amount_widget:
-                    self._set_line_edit_text(amount_widget, str(int(self.parse_number(amount_widget.text()))))
+            if not self._is_quantity_only_row_edit():
+                self._begin_designation_edit(row)
+                for col in amount_cols:
+                    amount_widget = self.product_table.cellWidget(row, col)
+                    if amount_widget:
+                        self._set_line_edit_text(amount_widget, str(int(self.parse_number(amount_widget.text()))))
             for col in editable_cols:
                 self.product_table.cellWidget(row, col).setReadOnly(False)
             self.product_table.cellWidget(row, focus_col).setFocus()
-            return
+            return True
+        return self.commit_active_edit()
+
+    def commit_active_edit(self):
+        row = self.active_edit_row
+        if row is None:
+            return True
+
+        designation_item = self.product_table.item(row, 0)
+        if designation_item is None:
+            self.active_edit_row = None
+            return True
+
+        pid = designation_item.data(Qt.UserRole)
+        if pid is None:
+            self.active_edit_row = None
+            return True
+
+        editable_cols = self._editable_row_columns()
+        amount_cols = [self._col("physico"), self._col("toxico"), self._col("micro")]
+        btn = self.product_table.cellWidget(row, self._col("edit"))
+
+        if self.invoice_type == "standard" and self._should_auto_select_standard_row(row, pid):
+            self._select_row_for_invoice(pid, row)
+            self._refresh_preview_refs()
+
         if self.invoice_type == "standard" and not self.validate_num_act_row(row):
             self.product_table.cellWidget(row, self._col("num_act")).setFocus()
-            return
+            return False
         if not self._save_designation_edit(row, pid):
-            return
+            return False
+
         self.on_price_component_changed(row)
         self._persist_row_changes(row, pid)
-        btn.setText("Modifier")
-        for col in amount_cols:
-            amount_widget = self.product_table.cellWidget(row, col)
-            if amount_widget:
-                self._set_line_edit_text(amount_widget, self.format_number(amount_widget.text()))
+
+        if btn:
+            btn.setText("Modifier")
+        if not self._is_quantity_only_row_edit():
+            for col in amount_cols:
+                amount_widget = self.product_table.cellWidget(row, col)
+                if amount_widget:
+                    self._set_line_edit_text(amount_widget, self.format_number(amount_widget.text()))
         for col in editable_cols:
-            self.product_table.cellWidget(row, col).setReadOnly(True)
+            widget = self.product_table.cellWidget(row, col)
+            if widget:
+                widget.setReadOnly(True)
         self.active_edit_row = None
         if self.selected_products.get(pid, False):
             self.selection_changed.emit()
         self._flush_pending_catalog_reload()
+        return True
 
     def toggle_edit_from_sender(self):
-        if not self.can_manage_catalog:
+        if not self._can_use_row_edit():
             return
         button = self.sender()
         if button is None:
@@ -574,7 +656,6 @@ class ProductManager(QWidget):
                 self._set_line_edit_text(num_act_widget, self._format_num_act_series(num_act_value))
         else:
             quantity_widget = self.product_table.cellWidget(row, self._col("quantity"))
-            duration_widget = self.product_table.cellWidget(row, self._col("duration"))
             physico_widget = self.product_table.cellWidget(row, self._col("physico"))
             toxico_widget = self.product_table.cellWidget(row, self._col("toxico"))
             micro_widget = self.product_table.cellWidget(row, self._col("micro"))
@@ -582,8 +663,6 @@ class ProductManager(QWidget):
             if quantity_widget is not None:
                 current_quantity = self.selected_quantities.get(pid, 1)
                 self._set_line_edit_text(quantity_widget, str(self._parse_positive_int(current_quantity, default=1, minimum=1)))
-            if duration_widget is not None:
-                self._set_line_edit_text(duration_widget, str(self._parse_positive_int(product.get("analysis_duration_days"), default=0, minimum=0)))
 
         self._set_line_edit_text(physico_widget, self.format_number(product["physico"]))
         self._set_line_edit_text(toxico_widget, self.format_number(product["toxico"]))
@@ -600,7 +679,7 @@ class ProductManager(QWidget):
             duration_widget = self.product_table.cellWidget(row, self._col("duration"))
             num_act_widget = self.product_table.cellWidget(row, self._col("num_act"))
             quantity_value = self._parse_positive_int(quantity_widget.text() if quantity_widget else 1, default=1, minimum=1)
-            analysis_duration_days = self._parse_positive_int(duration_widget.text() if duration_widget else 0, default=0, minimum=0)
+            analysis_duration_days = self._parse_positive_int(duration_widget.text() if duration_widget else self.product_analysis_durations.get(pid, 0), default=0, minimum=0)
             num_act = str(num_act_widget.text() if num_act_widget else "").strip()
             if self.selected_products.get(pid, False):
                 self.selected_num_acts[pid] = num_act
@@ -613,12 +692,13 @@ class ProductManager(QWidget):
             micro_col = self._col("micro")
             subtotal_col = self._col("subtotal")
             quantity_widget = self.product_table.cellWidget(row, self._col("quantity"))
-            duration_widget = self.product_table.cellWidget(row, self._col("duration"))
             quantity_value = self._parse_positive_int(quantity_widget.text() if quantity_widget else 1, default=1, minimum=1)
-            analysis_duration_days = self._parse_positive_int(duration_widget.text() if duration_widget else 0, default=0, minimum=0)
+            analysis_duration_days = self._parse_positive_int(self.product_analysis_durations.get(pid, 0), default=0, minimum=0)
             if self.selected_products.get(pid, False):
                 self.selected_quantities[pid] = quantity_value
             ref = 0
+            if self._is_quantity_only_row_edit():
+                return
 
         physico_widget = self.product_table.cellWidget(row, physico_col)
         toxico_widget = self.product_table.cellWidget(row, toxico_col)
@@ -632,7 +712,7 @@ class ProductManager(QWidget):
         self.product_service.update_product(
             pid,
             ref,
-            None,
+            num_act if self.invoice_type == "standard" else None,
             physico,
             toxico,
             micro,
@@ -788,24 +868,29 @@ class ProductManager(QWidget):
         for pid in self.selection_order:
             if not self.selected_products.get(pid, False):
                 continue
+            designation_key = self._designation_key_for_pid(pid)
             pid_quantity = self.selected_quantities.get(pid, self.product_default_quantities.get(pid, 1))
             for item_num_act in self._normalize_num_act_series(self.selected_num_acts.get(pid), pid_quantity):
                 if not item_num_act:
                     continue
-                if item_num_act in seen_values and seen_values[item_num_act] != pid:
+                previous_entry = seen_values.get(item_num_act)
+                if previous_entry and previous_entry["product_id"] != pid and previous_entry["designation_key"] != designation_key:
                     QMessageBox.warning(
                         self,
                         "N° Acte déjà utilisé",
                         f"Le N° Acte « {item_num_act} » est déjà utilisé par un autre produit dans cette facture.",
                     )
                     return False
-                seen_values[item_num_act] = pid
+                seen_values[item_num_act] = {
+                    "product_id": pid,
+                    "designation_key": designation_key,
+                }
 
         return True
 
     def set_loaded_record_locked(self, locked):
         self.loaded_record_locked = bool(locked)
-        self.add_product_btn.setEnabled(self.can_manage_catalog and not self.loaded_record_locked)
+        self.add_product_btn.setEnabled(self._can_manage_product_catalog() and not self.loaded_record_locked)
         for row in range(self.product_table.rowCount()):
             self._update_row_action_state(row)
 
@@ -817,14 +902,14 @@ class ProductManager(QWidget):
         btn_mod = self.product_table.cellWidget(row, btn_mod_col)
         btn_sel = self.product_table.cellWidget(row, btn_sel_col)
         if btn_del:
-            btn_del.setEnabled(self.can_manage_catalog and not self.loaded_record_locked)
+            btn_del.setEnabled(self._can_manage_product_catalog() and not self.loaded_record_locked)
         if btn_mod:
-            btn_mod.setEnabled(self.can_manage_catalog)
+            btn_mod.setEnabled(self._can_use_row_edit())
         if btn_sel:
             btn_sel.setEnabled(not self.loaded_record_locked)
 
     def delete_product_row(self, pid, row):
-        if not self.can_manage_catalog:
+        if not self._can_manage_product_catalog():
             return
         if self.loaded_record_locked:
             return
@@ -869,10 +954,11 @@ class ProductManager(QWidget):
 
         pid = item.data(Qt.UserRole)
         quantity_widget = self.product_table.cellWidget(row, self._col("quantity"))
-        duration_widget = self.product_table.cellWidget(row, self._col("duration"))
         quantity_value = self._parse_positive_int(quantity_widget.text() if quantity_widget else 1, default=1, minimum=1)
-        duration_value = self._parse_positive_int(duration_widget.text() if duration_widget else self.product_analysis_durations.get(pid, 0), default=0, minimum=0)
+        duration_value = self._parse_positive_int(self.product_analysis_durations.get(pid, 0), default=0, minimum=0)
         if self.invoice_type == "standard":
+            duration_widget = self.product_table.cellWidget(row, self._col("duration"))
+            duration_value = self._parse_positive_int(duration_widget.text() if duration_widget else self.product_analysis_durations.get(pid, 0), default=0, minimum=0)
             num_act = str(self.product_table.cellWidget(row, self._col("num_act")).text()).strip()
             if self.selected_products.get(pid, False):
                 self.selected_num_acts[pid] = num_act
@@ -885,6 +971,35 @@ class ProductManager(QWidget):
         if self.selected_products.get(pid, False):
             self.selection_changed.emit()
 
+    def _select_row_for_invoice(self, pid, row):
+        btn = self.product_table.cellWidget(row, self._col("select"))
+        if btn:
+            btn.setText("Annuler")
+        self.selected_products[pid] = True
+        if pid not in self.selection_order:
+            self.selection_order.append(pid)
+        quantity_widget = self.product_table.cellWidget(row, self._col("quantity"))
+        self.selected_quantities[pid] = self._parse_positive_int(quantity_widget.text() if quantity_widget else 1, default=1, minimum=1)
+        if self.invoice_type == "standard":
+            duration_widget = self.product_table.cellWidget(row, self._col("duration"))
+            num_act_widget = self.product_table.cellWidget(row, self._col("num_act"))
+            current_num_act = str(num_act_widget.text() if num_act_widget else "").strip()
+            self.selected_num_acts[pid] = current_num_act
+            self.selected_result_dates[pid] = self._compute_result_date_from_duration(
+                self._parse_positive_int(duration_widget.text() if duration_widget else self.product_analysis_durations.get(pid, 0), default=0, minimum=0)
+            )
+        self.apply_selection_style(row)
+
+    def _should_auto_select_standard_row(self, row, pid):
+        if self.invoice_type != "standard":
+            return False
+        if self.selected_products.get(pid, False):
+            return False
+        num_act_widget = self.product_table.cellWidget(row, self._col("num_act"))
+        if num_act_widget is None:
+            return False
+        return bool(str(num_act_widget.text()).strip())
+
     def toggle_select(self, pid, row):
         if self.loaded_record_locked:
             return
@@ -894,20 +1009,7 @@ class ProductManager(QWidget):
 
         if not currently_selected:
             # Select: mark and append to order
-            if btn:
-                btn.setText("Annuler")
-            self.selected_products[pid] = True
-            if pid not in self.selection_order:
-                self.selection_order.append(pid)
-            quantity_widget = self.product_table.cellWidget(row, self._col("quantity"))
-            duration_widget = self.product_table.cellWidget(row, self._col("duration"))
-            self.selected_quantities[pid] = self._parse_positive_int(quantity_widget.text() if quantity_widget else 1, default=1, minimum=1)
-            if self.invoice_type == "standard":
-                num_act_widget = self.product_table.cellWidget(row, self._col("num_act"))
-                current_num_act = str(num_act_widget.text() if num_act_widget else "").strip()
-                self.selected_num_acts[pid] = current_num_act
-                self.selected_result_dates[pid] = self._compute_result_date_from_duration(self._parse_positive_int(duration_widget.text() if duration_widget else self.product_analysis_durations.get(pid, 0), default=0, minimum=0))
-            self.apply_selection_style(row)
+            self._select_row_for_invoice(pid, row)
         else:
             # Deselect: unmark and remove from order
             if btn:
@@ -986,7 +1088,7 @@ class ProductManager(QWidget):
         if self.invoice_type == "standard":
             editable_cols = [self._col("quantity"), self._col("duration"), self._col("ref"), self._col("num_act"), self._col("physico"), self._col("toxico"), self._col("micro")]
         else:
-            editable_cols = [self._col("quantity"), self._col("duration"), self._col("physico"), self._col("toxico"), self._col("micro")]
+            editable_cols = [self._col("quantity"), self._col("physico"), self._col("toxico"), self._col("micro")]
         for col in editable_cols:
             widget = self.product_table.cellWidget(row, col)
             if widget:
@@ -1003,7 +1105,7 @@ class ProductManager(QWidget):
         if self.invoice_type == "standard":
             editable_cols = [self._col("quantity"), self._col("duration"), self._col("ref"), self._col("num_act"), self._col("physico"), self._col("toxico"), self._col("micro")]
         else:
-            editable_cols = [self._col("quantity"), self._col("duration"), self._col("physico"), self._col("toxico"), self._col("micro")]
+            editable_cols = [self._col("quantity"), self._col("physico"), self._col("toxico"), self._col("micro")]
         for col in editable_cols:
             widget = self.product_table.cellWidget(row, col)
             if widget:
@@ -1061,7 +1163,7 @@ class ProductManager(QWidget):
                 if pid is None:
                     continue
                 bucket = aggregated_items.setdefault(pid, {"count": 0, "refs": [], "num_acts": [], "result_date": None})
-                bucket["count"] += 1
+                bucket["count"] += self._parse_positive_int(line.get("quantity"), default=1, minimum=1)
                 if line.get("ref_b_analyse") is not None:
                     bucket["refs"].append(int(line.get("ref_b_analyse")))
                 if str(line.get("num_act") or "").strip():
@@ -1230,10 +1332,10 @@ class ProductManager(QWidget):
         """If a row is in edit mode (widgets not-readonly), cancel it cleanly."""
         if self.invoice_type == "standard":
             widget_col, btn_mod_col = self._col("num_act"), self._col("edit")
-            editable_cols, amount_cols = [self._col("quantity"), self._col("duration"), self._col("ref"), self._col("num_act"), self._col("physico"), self._col("toxico"), self._col("micro")], [self._col("physico"), self._col("toxico"), self._col("micro")]
         else:
             widget_col, btn_mod_col = self._col("quantity"), self._col("edit")
-            editable_cols, amount_cols = [self._col("quantity"), self._col("duration"), self._col("physico"), self._col("toxico"), self._col("micro")], [self._col("physico"), self._col("toxico"), self._col("micro")]
+        editable_cols = self._editable_row_columns()
+        amount_cols = [self._col("physico"), self._col("toxico"), self._col("micro")]
         widget = self.product_table.cellWidget(row, widget_col)
         if widget is None or widget.isReadOnly():
             return  # Not in edit mode
@@ -1246,7 +1348,7 @@ class ProductManager(QWidget):
             self.product_table.removeCellWidget(row, 0)
         if pid is not None:
             self._restore_row_from_database(row, pid)
-        else:
+        elif not self._is_quantity_only_row_edit():
             for col in amount_cols:
                 w = self.product_table.cellWidget(row, col)
                 if w:
@@ -1304,6 +1406,14 @@ class ProductManager(QWidget):
             if not self.selected_products.get(pid, False):
                 continue
             quantity = self.selected_quantities.get(pid, 1)
+            if self.invoice_type != "standard":
+                line_items.append(
+                    {
+                        "product_id": pid,
+                        "quantity": quantity,
+                    }
+                )
+                continue
             refs = self.selected_refs.get(pid)
             refs = list(refs) if isinstance(refs, list) else ([int(refs)] if refs is not None else [])
             if allocate_missing_refs:

@@ -22,6 +22,13 @@ class InvoicePrinter:
         self.parent = parent_widget
 
     @staticmethod
+    def _normalize_quantity(value):
+        try:
+            return max(int(value or 1), 1)
+        except (TypeError, ValueError):
+            return 1
+
+    @staticmethod
     def _format_price(value, suffix=""):
         text = str(value or "").replace("Ar", "").replace(" ", "").strip()
         if not text:
@@ -134,6 +141,7 @@ class InvoicePrinter:
                 continue
             if isinstance(selected_item, dict):
                 prod = dict(prod)
+                prod['quantity'] = self._normalize_quantity(selected_item.get('quantity'))
                 if selected_item.get('ref_b_analyse') is not None:
                     prod['ref_b_analyse'] = selected_item.get('ref_b_analyse')
                 if selected_item.get('num_act') is not None:
@@ -145,9 +153,13 @@ class InvoicePrinter:
                 if not isinstance(prod, dict):
                     prod = dict(prod)
                 prod['num_act'] = num_act_mapping.get(pid)
+            if 'quantity' not in prod:
+                prod = dict(prod)
+                prod['quantity'] = self._normalize_quantity(prod.get('quantity'))
+            prod['line_subtotal'] = float(prod.get('subtotal', 0) or 0) * self._normalize_quantity(prod.get('quantity'))
             products.append(prod)
         
-        total = sum(float(p.get('subtotal', 0) or 0) for p in products)
+        total = sum(float(p.get('line_subtotal', p.get('subtotal', 0)) or 0) for p in products)
         total_formatted = self._format_price(total)
         total_words = TextUtils.number_to_words(round(total)).upper()
         
@@ -282,22 +294,24 @@ class InvoicePrinter:
             ]
             total_span_end = -3
         else:
-            header_row = ['Désignations', 'Physico', 'Micro', 'Toxico', 'Sous total (Ariary)']
+            header_row = ['Désignations', 'Nombre', 'Physico', 'Micro', 'Toxico', 'Sous total (Ariary)']
             data_rows = [header_row]
             for prod in products:
                 data_rows.append([
                     Paragraph(escape(str(prod.get('product_name', '') or '')), designation_style),
+                    str(self._normalize_quantity(prod.get('quantity'))),
                     self._format_price(prod.get('physico', '')),
                     self._format_price(prod.get('micro', '')),
                     self._format_price(prod.get('toxico', '')),
-                    self._format_price(prod.get('subtotal', '')),
+                    self._format_price(prod.get('line_subtotal', '')),
                 ])
-            data_rows.append(['', '', '', 'Montant à payer', total_formatted + ' Ar'])
+            data_rows.append(['', '', '', '', 'Montant à payer', total_formatted + ' Ar'])
             col_widths = [
-                page_width * 0.32,
-                page_width * 0.16,
-                page_width * 0.16,
-                page_width * 0.16,
+                page_width * 0.28,
+                page_width * 0.10,
+                page_width * 0.14,
+                page_width * 0.14,
+                page_width * 0.14,
                 page_width * 0.20,
             ]
             total_span_end = -2

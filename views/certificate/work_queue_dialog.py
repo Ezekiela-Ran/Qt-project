@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from PySide6.QtCore import Qt, QDate, QSignalBlocker, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -1249,6 +1251,18 @@ class CertificateWorkQueueDialog(QDialog):
                 return cert_type
         return None
 
+    @staticmethod
+    def _current_printed_timestamp() -> str:
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def _mark_row_as_printed(self, row: dict, cert_type: str):
+        payload = dict(row["cached_entries"].get(cert_type) or self._snapshot_row_values(row, cert_type))
+        payload["printed_at"] = self._current_printed_timestamp()
+        row["cached_entries"][cert_type] = payload
+        row["printed_at"] = payload["printed_at"]
+        self._persist_row_state(row, cert_type)
+        self._load_products()
+
     def _on_row_print_clicked(self, row_key: tuple):
         row = self._get_row(row_key)
         if row is None:
@@ -1274,6 +1288,14 @@ class CertificateWorkQueueDialog(QDialog):
         )
         if not success:
             return
+        try:
+            self._mark_row_as_printed(row, cert_type)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Statut d'impression indisponible",
+                f"L'aperçu du certificat pour « {row['name']} » a réussi, mais son statut imprimé n'a pas pu être enregistré.\n\n{exc}",
+            )
 
     def closeEvent(self, event):
         if hasattr(self, "refresh_timer"):

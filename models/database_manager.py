@@ -150,11 +150,13 @@ class DatabaseManager(Tables):
                 ref_b_analyse = line.get("ref_b_analyse")
                 num_act = self._normalize_num_act(line.get("num_act"))
                 result_date = str(line.get("result_date") or default_result_date or "").strip() or None
+                quantity = self._normalize_product_default_quantity(line.get("quantity"))
             else:
                 product_id = line
                 ref_b_analyse = None
                 num_act = None
                 result_date = str(default_result_date or "").strip() or None
+                quantity = 1
             if product_id is None:
                 continue
             normalized_items.append(
@@ -163,6 +165,7 @@ class DatabaseManager(Tables):
                     "ref_b_analyse": ref_b_analyse,
                     "num_act": num_act,
                     "result_date": result_date,
+                    "quantity": quantity,
                 }
             )
         return normalized_items
@@ -173,7 +176,9 @@ class DatabaseManager(Tables):
             product = self.get_product_by_id(line["product_id"])
             if not product:
                 continue
-            item_total = float(product["subtotal"] or 0)
+            quantity = self._normalize_product_default_quantity(line.get("quantity"))
+            unit_subtotal = float(product["subtotal"] or 0)
+            item_total = unit_subtotal * quantity
             self.cursor.execute(
                 "INSERT INTO invoice_client (invoice_id, invoice_type, product_id, ref_b_analyse, num_act, result_date, quantity, physico, micro, toxico, subtotal, total) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
@@ -183,7 +188,7 @@ class DatabaseManager(Tables):
                     line["ref_b_analyse"],
                     line["num_act"],
                     line["result_date"],
-                    1,
+                    quantity,
                     product["physico"],
                     product["micro"],
                     product["toxico"],
@@ -1140,7 +1145,7 @@ class DatabaseManager(Tables):
 
     def get_invoice_items_with_refs(self, invoice_id, invoice_type):
         self.cursor.execute(
-            "SELECT id AS invoice_item_id, product_id, ref_b_analyse, num_act, result_date FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s ORDER BY id ASC",
+            "SELECT id AS invoice_item_id, product_id, ref_b_analyse, num_act, result_date, quantity FROM invoice_client WHERE invoice_id=%s AND invoice_type=%s ORDER BY id ASC",
             (invoice_id, invoice_type),
         )
         return self.cursor.fetchall()

@@ -7,7 +7,8 @@ class CalculateTotalAction:
             product = body_layout.product_service.get_product_by_id(pid)
             if product and "subtotal" in product:
                 try:
-                    total += float(product["subtotal"] or 0)
+                    quantity = max(int(line_item.get("quantity") or 1), 1)
+                    total += float(product["subtotal"] or 0) * quantity
                 except (TypeError, ValueError):
                     pass
         return total
