@@ -321,6 +321,22 @@ class ProductManager(QWidget):
         except (TypeError, ValueError):
             return max(int(default), minimum)
 
+    @staticmethod
+    def _normalize_designation_key(value):
+        return " ".join(str(value or "").split()).strip().casefold()
+
+    def _designation_key_for_pid(self, pid):
+        row = self._find_row_for_product(pid)
+        if row >= 0:
+            item = self.product_table.item(row, self._col("designation"))
+            if item is not None:
+                return self._normalize_designation_key(item.text())
+
+        product = self.product_service.get_product_by_id(pid)
+        if not product:
+            return ""
+        return self._normalize_designation_key(product.get("product_name"))
+
     def _split_series_values(self, value):
         if isinstance(value, list):
             return [str(item).strip() for item in value if str(item or "").strip()]
@@ -330,13 +346,20 @@ class ProductManager(QWidget):
         values = [self._normalize_num_act(chunk) for chunk in self._split_series_values(value)]
         values = [item for item in values if item]
         normalized = values[:quantity]
+        if len(normalized) == 1 and quantity > 1:
+            normalized = normalized * quantity
         while len(normalized) < quantity:
             normalized.append(None)
         return normalized
 
     def _format_num_act_series(self, values):
         if isinstance(values, list):
-            return "; ".join(str(value).strip() for value in values if str(value or "").strip())
+            compact_values = [str(value).strip() for value in values if str(value or "").strip()]
+            if not compact_values:
+                return ""
+            if len(set(compact_values)) == 1:
+                return compact_values[0]
+            return "; ".join(compact_values)
         return self._display_num_act(values)
 
     def _format_ref_preview(self, refs):
@@ -450,15 +473,15 @@ class ProductManager(QWidget):
 
     def toggle_edit(self, row):
         if not self._can_use_row_edit():
-            return
+            return False
         if self.active_edit_row is not None and self.active_edit_row != row:
-            return
+            return False
         designation_item = self.product_table.item(row, 0)
         if designation_item is None:
-            return
+            return False
         pid = designation_item.data(Qt.UserRole)
         if pid is None:
-            return
+            return False
         if self.invoice_type == "standard":
             widget_col = self._col("num_act")
             btn_col = self._col("edit")
@@ -484,26 +507,53 @@ class ProductManager(QWidget):
             for col in editable_cols:
                 self.product_table.cellWidget(row, col).setReadOnly(False)
             self.product_table.cellWidget(row, focus_col).setFocus()
-            return
+            return True
+        return self.commit_active_edit()
+
+    def commit_active_edit(self):
+        row = self.active_edit_row
+        if row is None:
+            return True
+
+        designation_item = self.product_table.item(row, 0)
+        if designation_item is None:
+            self.active_edit_row = None
+            return True
+
+        pid = designation_item.data(Qt.UserRole)
+        if pid is None:
+            self.active_edit_row = None
+            return True
+
+        editable_cols = self._editable_row_columns()
+        amount_cols = [self._col("physico"), self._col("toxico"), self._col("micro")]
+        btn = self.product_table.cellWidget(row, self._col("edit"))
+
         if self.invoice_type == "standard" and not self.validate_num_act_row(row):
             self.product_table.cellWidget(row, self._col("num_act")).setFocus()
-            return
+            return False
         if not self._save_designation_edit(row, pid):
-            return
+            return False
+
         self.on_price_component_changed(row)
         self._persist_row_changes(row, pid)
-        btn.setText("Modifier")
+
+        if btn:
+            btn.setText("Modifier")
         if not self._is_quantity_only_row_edit():
             for col in amount_cols:
                 amount_widget = self.product_table.cellWidget(row, col)
                 if amount_widget:
                     self._set_line_edit_text(amount_widget, self.format_number(amount_widget.text()))
         for col in editable_cols:
-            self.product_table.cellWidget(row, col).setReadOnly(True)
+            widget = self.product_table.cellWidget(row, col)
+            if widget:
+                widget.setReadOnly(True)
         self.active_edit_row = None
         if self.selected_products.get(pid, False):
             self.selection_changed.emit()
         self._flush_pending_catalog_reload()
+        return True
 
     def toggle_edit_from_sender(self):
         if not self._can_use_row_edit():
@@ -649,7 +699,7 @@ class ProductManager(QWidget):
         self.product_service.update_product(
             pid,
             ref,
-            None,
+            num_act if self.invoice_type == "standard" else None,
             physico,
             toxico,
             micro,
@@ -805,18 +855,23 @@ class ProductManager(QWidget):
         for pid in self.selection_order:
             if not self.selected_products.get(pid, False):
                 continue
+            designation_key = self._designation_key_for_pid(pid)
             pid_quantity = self.selected_quantities.get(pid, self.product_default_quantities.get(pid, 1))
             for item_num_act in self._normalize_num_act_series(self.selected_num_acts.get(pid), pid_quantity):
                 if not item_num_act:
                     continue
-                if item_num_act in seen_values and seen_values[item_num_act] != pid:
+                previous_entry = seen_values.get(item_num_act)
+                if previous_entry and previous_entry["product_id"] != pid and previous_entry["designation_key"] != designation_key:
                     QMessageBox.warning(
                         self,
                         "N° Acte déjà utilisé",
                         f"Le N° Acte « {item_num_act} » est déjà utilisé par un autre produit dans cette facture.",
                     )
                     return False
-                seen_values[item_num_act] = pid
+                seen_values[item_num_act] = {
+                    "product_id": pid,
+                    "designation_key": designation_key,
+                }
 
         return True
 

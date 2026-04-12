@@ -4,6 +4,10 @@ from views.foundation.globals import GlobalVariable
 
 class SaveInvoiceAction:
     @staticmethod
+    def _normalize_designation_key(value):
+        return " ".join(str(value or "").split()).strip().casefold()
+
+    @staticmethod
     def _refresh_record_list(main_layout, body_layout):
         head_layout = getattr(main_layout, "head_layout", None)
         record_widget = getattr(head_layout, "record", None)
@@ -46,6 +50,8 @@ class SaveInvoiceAction:
             form.set_responsable_username(responsable)
 
         pm = body_layout.product_manager
+        if hasattr(pm, "commit_active_edit") and not pm.commit_active_edit():
+            return
         selected_line_items = pm.build_selected_line_items()
         if not selected_line_items:
             errors.append("Au moins un produit doit être sélectionné")
@@ -72,17 +78,23 @@ class SaveInvoiceAction:
                 num_act = line_item.get("num_act")
                 if num_act is None:
                     continue
+                product = body_layout.product_service.get_product_by_id(pid)
+                product_name = product["product_name"] if product else str(pid)
+                designation_key = SaveInvoiceAction._normalize_designation_key(product_name)
                 if num_act in seen_num_act:
                     first_pid = seen_num_act[num_act]["product_id"]
-                    first_product = body_layout.product_service.get_product_by_id(first_pid)
-                    second_product = body_layout.product_service.get_product_by_id(pid)
-                    first_name = first_product["product_name"] if first_product else str(first_pid)
-                    second_name = second_product["product_name"] if second_product else str(pid)
-                    errors.append(
-                        f"N° Acte dupliqué dans la facture: '{num_act}' est utilisé pour {first_name} et {second_name}."
-                    )
+                    first_designation_key = seen_num_act[num_act]["designation_key"]
+                    if first_pid != pid and first_designation_key != designation_key:
+                        first_name = seen_num_act[num_act]["product_name"]
+                        errors.append(
+                            f"N° Acte dupliqué dans la facture: '{num_act}' est utilisé pour {first_name} et {product_name}."
+                        )
                 else:
-                    seen_num_act[num_act] = line_item
+                    seen_num_act[num_act] = {
+                        "product_id": pid,
+                        "designation_key": designation_key,
+                        "product_name": product_name,
+                    }
         else:
             selected_line_items = pm.build_selected_line_items()
 
