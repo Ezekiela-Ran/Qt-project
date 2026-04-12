@@ -152,7 +152,7 @@ class ProductManager(QWidget):
         self.del_type_btn.setVisible(self.can_manage_catalog)
         self.add_product_btn.setVisible(self.can_manage_catalog)
         self.product_table.setColumnHidden(self._col("delete"), not self.can_manage_catalog)
-        self.product_table.setColumnHidden(self._col("edit"), not self.can_manage_catalog)
+        self.product_table.setColumnHidden(self._col("edit"), not self._can_use_row_edit())
 
     def _col(self, name):
         if self.invoice_type == "standard":
@@ -161,6 +161,19 @@ class ProductManager(QWidget):
 
     def _has_duration_column(self):
         return self.invoice_type == "standard"
+
+    def _can_use_row_edit(self):
+        return self.can_manage_catalog or self.invoice_type == "proforma"
+
+    def _is_quantity_only_row_edit(self):
+        return self.invoice_type == "proforma" and not self.can_manage_catalog
+
+    def _editable_row_columns(self):
+        if self.invoice_type == "standard":
+            return [self._col("quantity"), self._col("duration"), self._col("ref"), self._col("num_act"), self._col("physico"), self._col("toxico"), self._col("micro")]
+        if self._is_quantity_only_row_edit():
+            return [self._col("quantity")]
+        return [self._col("quantity"), self._col("physico"), self._col("toxico"), self._col("micro")]
 
     def _configure_product_table_columns(self):
         header = self.product_table.horizontalHeader()
@@ -416,10 +429,10 @@ class ProductManager(QWidget):
 
         if not self.can_manage_catalog:
             btn_del.setVisible(False)
-            btn_mod.setVisible(False)
+            btn_mod.setVisible(self._can_use_row_edit())
 
         btn_del.setEnabled(self.can_manage_catalog and not self.loaded_record_locked)
-        btn_mod.setEnabled(self.can_manage_catalog)
+        btn_mod.setEnabled(self._can_use_row_edit())
         btn_sel.setEnabled(not self.loaded_record_locked)
 
         # Réappliquer style si déjà sélectionné
@@ -436,7 +449,7 @@ class ProductManager(QWidget):
             self.apply_selection_style(row)
 
     def toggle_edit(self, row):
-        if not self.can_manage_catalog:
+        if not self._can_use_row_edit():
             return
         if self.active_edit_row is not None and self.active_edit_row != row:
             return
@@ -449,25 +462,25 @@ class ProductManager(QWidget):
         if self.invoice_type == "standard":
             widget_col = self._col("num_act")
             btn_col = self._col("edit")
-            editable_cols = [self._col("quantity"), self._col("duration"), self._col("ref"), self._col("num_act"), self._col("physico"), self._col("toxico"), self._col("micro")]
             amount_cols = [self._col("physico"), self._col("toxico"), self._col("micro")]
             focus_col = self._col("quantity")
         else:
             widget_col = self._col("quantity")
             btn_col = self._col("edit")
-            editable_cols = [self._col("quantity"), self._col("physico"), self._col("toxico"), self._col("micro")]
             amount_cols = [self._col("physico"), self._col("toxico"), self._col("micro")]
             focus_col = self._col("quantity")
+        editable_cols = self._editable_row_columns()
         widget = self.product_table.cellWidget(row, widget_col)
         btn = self.product_table.cellWidget(row, btn_col)
         if widget.isReadOnly():
             self.active_edit_row = row
             btn.setText("Sauver")
-            self._begin_designation_edit(row)
-            for col in amount_cols:
-                amount_widget = self.product_table.cellWidget(row, col)
-                if amount_widget:
-                    self._set_line_edit_text(amount_widget, str(int(self.parse_number(amount_widget.text()))))
+            if not self._is_quantity_only_row_edit():
+                self._begin_designation_edit(row)
+                for col in amount_cols:
+                    amount_widget = self.product_table.cellWidget(row, col)
+                    if amount_widget:
+                        self._set_line_edit_text(amount_widget, str(int(self.parse_number(amount_widget.text()))))
             for col in editable_cols:
                 self.product_table.cellWidget(row, col).setReadOnly(False)
             self.product_table.cellWidget(row, focus_col).setFocus()
@@ -480,10 +493,11 @@ class ProductManager(QWidget):
         self.on_price_component_changed(row)
         self._persist_row_changes(row, pid)
         btn.setText("Modifier")
-        for col in amount_cols:
-            amount_widget = self.product_table.cellWidget(row, col)
-            if amount_widget:
-                self._set_line_edit_text(amount_widget, self.format_number(amount_widget.text()))
+        if not self._is_quantity_only_row_edit():
+            for col in amount_cols:
+                amount_widget = self.product_table.cellWidget(row, col)
+                if amount_widget:
+                    self._set_line_edit_text(amount_widget, self.format_number(amount_widget.text()))
         for col in editable_cols:
             self.product_table.cellWidget(row, col).setReadOnly(True)
         self.active_edit_row = None
@@ -492,7 +506,7 @@ class ProductManager(QWidget):
         self._flush_pending_catalog_reload()
 
     def toggle_edit_from_sender(self):
-        if not self.can_manage_catalog:
+        if not self._can_use_row_edit():
             return
         button = self.sender()
         if button is None:
@@ -620,6 +634,8 @@ class ProductManager(QWidget):
             if self.selected_products.get(pid, False):
                 self.selected_quantities[pid] = quantity_value
             ref = 0
+            if self._is_quantity_only_row_edit():
+                return
 
         physico_widget = self.product_table.cellWidget(row, physico_col)
         toxico_widget = self.product_table.cellWidget(row, toxico_col)
@@ -820,7 +836,7 @@ class ProductManager(QWidget):
         if btn_del:
             btn_del.setEnabled(self.can_manage_catalog and not self.loaded_record_locked)
         if btn_mod:
-            btn_mod.setEnabled(self.can_manage_catalog)
+            btn_mod.setEnabled(self._can_use_row_edit())
         if btn_sel:
             btn_sel.setEnabled(not self.loaded_record_locked)
 
@@ -1232,10 +1248,10 @@ class ProductManager(QWidget):
         """If a row is in edit mode (widgets not-readonly), cancel it cleanly."""
         if self.invoice_type == "standard":
             widget_col, btn_mod_col = self._col("num_act"), self._col("edit")
-            editable_cols, amount_cols = [self._col("quantity"), self._col("duration"), self._col("ref"), self._col("num_act"), self._col("physico"), self._col("toxico"), self._col("micro")], [self._col("physico"), self._col("toxico"), self._col("micro")]
         else:
             widget_col, btn_mod_col = self._col("quantity"), self._col("edit")
-            editable_cols, amount_cols = [self._col("quantity"), self._col("physico"), self._col("toxico"), self._col("micro")], [self._col("physico"), self._col("toxico"), self._col("micro")]
+        editable_cols = self._editable_row_columns()
+        amount_cols = [self._col("physico"), self._col("toxico"), self._col("micro")]
         widget = self.product_table.cellWidget(row, widget_col)
         if widget is None or widget.isReadOnly():
             return  # Not in edit mode
@@ -1248,7 +1264,7 @@ class ProductManager(QWidget):
             self.product_table.removeCellWidget(row, 0)
         if pid is not None:
             self._restore_row_from_database(row, pid)
-        else:
+        elif not self._is_quantity_only_row_edit():
             for col in amount_cols:
                 w = self.product_table.cellWidget(row, col)
                 if w:
