@@ -164,12 +164,12 @@ class CertificatePrinter:
     def _build_proces_verbal(num_acte: str, num_prl: str, date_commerce: str, year_two_digits: str) -> str:
         reference = ""
         if num_acte:
-            reference = f"N°{num_acte}-{year_two_digits}/MIC/SG/DGC/DPC/PRL"
+            reference = f"N°{num_acte}-{year_two_digits}" if year_two_digits else f"N°{num_acte}"
         elif year_two_digits:
-            reference = f"N°-{year_two_digits}/MIC/SG/DGC/DPC/PRL"
+            reference = f"N°-{year_two_digits}"
 
         if num_prl:
-            reference = f"{reference} {num_prl}".strip()
+            reference = f"{reference}/{num_prl}" if reference else num_prl
         if date_commerce:
             return f"{reference} du {date_commerce}".strip()
         return reference.strip()

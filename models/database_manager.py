@@ -272,17 +272,25 @@ class DatabaseManager(Tables):
         self._ensure_certificate_counter_settings()
         self._backfill_certificate_invoice_item_ids()
         self._migrate_certificate_entry_type_storage()
+        self._drop_products_num_act_unique_index()
 
         if self.is_mysql:
-            if not self.index_exists("uk_products_num_act"):
-                self.cursor.execute("CREATE UNIQUE INDEX uk_products_num_act ON products(num_act)")
             self._ensure_certificate_entry_scope_index()
             if not self.index_exists("uk_users_username"):
                 self.cursor.execute("CREATE UNIQUE INDEX uk_users_username ON users(username)")
         else:
-            self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_products_num_act ON products(num_act)")
             self._ensure_certificate_entry_scope_index()
             self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_users_username ON users(username)")
+
+    def _drop_products_num_act_unique_index(self):
+        if not self.index_exists("uk_products_num_act"):
+            return
+
+        if self.is_mysql:
+            self.cursor.execute("DROP INDEX uk_products_num_act ON products")
+            return
+
+        self.cursor.execute("DROP INDEX IF EXISTS uk_products_num_act")
 
     def _ensure_certificate_counter_settings(self):
         for start_key, last_key in self.CERTIFICATE_COUNTER_KEYS.values():
@@ -1038,6 +1046,11 @@ class DatabaseManager(Tables):
                 self.cursor.execute(
                     "UPDATE products SET ref_b_analyse=%s WHERE id=%s",
                     (ref, product_id)
+                )
+            if num_act is not None:
+                self.cursor.execute(
+                    "UPDATE products SET num_act=%s WHERE id=%s",
+                    (self._normalize_num_act(num_act), product_id)
                 )
             if analysis_duration_days is not None:
                 try:

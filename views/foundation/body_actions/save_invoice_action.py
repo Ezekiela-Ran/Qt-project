@@ -71,30 +71,6 @@ class SaveInvoiceAction:
                     errors.append(
                         f"Ref.b.analyse manquant pour le produit {product_name}. Désélectionnez puis resélectionnez le produit."
                     )
-
-            seen_num_act = {}
-            for line_item in selected_line_items:
-                pid = line_item.get("product_id")
-                num_act = line_item.get("num_act")
-                if num_act is None:
-                    continue
-                product = body_layout.product_service.get_product_by_id(pid)
-                product_name = product["product_name"] if product else str(pid)
-                designation_key = SaveInvoiceAction._normalize_designation_key(product_name)
-                if num_act in seen_num_act:
-                    first_pid = seen_num_act[num_act]["product_id"]
-                    first_designation_key = seen_num_act[num_act]["designation_key"]
-                    if first_pid != pid and first_designation_key != designation_key:
-                        first_name = seen_num_act[num_act]["product_name"]
-                        errors.append(
-                            f"N° Acte dupliqué dans la facture: '{num_act}' est utilisé pour {first_name} et {product_name}."
-                        )
-                else:
-                    seen_num_act[num_act] = {
-                        "product_id": pid,
-                        "designation_key": designation_key,
-                        "product_name": product_name,
-                    }
         else:
             selected_line_items = pm.build_selected_line_items()
 

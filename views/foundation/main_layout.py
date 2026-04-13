@@ -10,16 +10,30 @@ from models.database_manager import DatabaseManager
 
 
 class CounterInitializationWorker(QtCore.QObject):
-    succeeded = QtCore.Signal(int, int, int, int)
+    succeeded = QtCore.Signal(int, int, int, int, int, int, int, int)
     failed = QtCore.Signal(str, str)
     finished = QtCore.Signal()
 
-    def __init__(self, invoice_start: int, ref_start: int, cert_cc_start: int, cert_cnc_start: int):
+    def __init__(
+        self,
+        invoice_start: int,
+        ref_start: int,
+        cert_cc_start: int,
+        cert_cnc_start: int,
+        cert_cp_start: int,
+        cert_cnp_start: int,
+        cert_ccon_start: int,
+        cert_cncon_start: int,
+    ):
         super().__init__()
         self.invoice_start = int(invoice_start)
         self.ref_start = int(ref_start)
         self.cert_cc_start = int(cert_cc_start)
         self.cert_cnc_start = int(cert_cnc_start)
+        self.cert_cp_start = int(cert_cp_start)
+        self.cert_cnp_start = int(cert_cnp_start)
+        self.cert_ccon_start = int(cert_ccon_start)
+        self.cert_cncon_start = int(cert_cncon_start)
 
     @QtCore.Slot()
     def run(self):
@@ -31,6 +45,10 @@ class CounterInitializationWorker(QtCore.QObject):
                 self.ref_start,
                 self.cert_cc_start,
                 self.cert_cnc_start,
+                cert_cp_start=self.cert_cp_start,
+                cert_cnp_start=self.cert_cnp_start,
+                cert_ccon_start=self.cert_ccon_start,
+                cert_cncon_start=self.cert_cncon_start,
             )
         except ValueError as exc:
             self.failed.emit("warning", str(exc))
@@ -42,6 +60,10 @@ class CounterInitializationWorker(QtCore.QObject):
                 self.ref_start,
                 self.cert_cc_start,
                 self.cert_cnc_start,
+                self.cert_cp_start,
+                self.cert_cnp_start,
+                self.cert_ccon_start,
+                self.cert_cncon_start,
             )
         finally:
             if db is not None:
@@ -59,6 +81,10 @@ class MainLayout(QWidget):
         self._last_ref_start = 1
         self._last_cert_cc_start = 1
         self._last_cert_cnc_start = 1
+        self._last_cert_cp_start = 1
+        self._last_cert_cnp_start = 1
+        self._last_cert_ccon_start = 1
+        self._last_cert_cncon_start = 1
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(8)
@@ -140,13 +166,72 @@ class MainLayout(QWidget):
             if not ok:
                 return
 
-            self._start_counter_initialization(invoice_start, ref_start, cert_cc_start, cert_cnc_start)
+            cert_cp_start, ok = QInputDialog.getInt(
+                self,
+                "Initialiser N° cert CP",
+                "Valeur de départ pour le N° certificat CP :",
+                value=self._last_cert_cp_start,
+                minValue=1,
+            )
+            if not ok:
+                return
+
+            cert_cnp_start, ok = QInputDialog.getInt(
+                self,
+                "Initialiser N° cert CNP",
+                "Valeur de départ pour le N° certificat CNP :",
+                value=self._last_cert_cnp_start,
+                minValue=1,
+            )
+            if not ok:
+                return
+
+            cert_ccon_start, ok = QInputDialog.getInt(
+                self,
+                "Initialiser N° cert CCON",
+                "Valeur de départ pour le N° certificat CCON :",
+                value=self._last_cert_ccon_start,
+                minValue=1,
+            )
+            if not ok:
+                return
+
+            cert_cncon_start, ok = QInputDialog.getInt(
+                self,
+                "Initialiser N° cert CNCON",
+                "Valeur de départ pour le N° certificat CNCON :",
+                value=self._last_cert_cncon_start,
+                minValue=1,
+            )
+            if not ok:
+                return
+
+            self._start_counter_initialization(
+                invoice_start,
+                ref_start,
+                cert_cc_start,
+                cert_cnc_start,
+                cert_cp_start,
+                cert_cnp_start,
+                cert_ccon_start,
+                cert_cncon_start,
+            )
         except ValueError as exc:
             QMessageBox.warning(self, "Initialisation impossible", str(exc))
         except Exception as exc:
             QMessageBox.critical(self, "Erreur", f"L'initialisation a échoué : {exc}")
 
-    def _start_counter_initialization(self, invoice_start: int, ref_start: int, cert_cc_start: int, cert_cnc_start: int):
+    def _start_counter_initialization(
+        self,
+        invoice_start: int,
+        ref_start: int,
+        cert_cc_start: int,
+        cert_cnc_start: int,
+        cert_cp_start: int,
+        cert_cnp_start: int,
+        cert_ccon_start: int,
+        cert_cncon_start: int,
+    ):
         if self._counter_init_thread is not None:
             QMessageBox.information(
                 self,
@@ -174,6 +259,10 @@ class MainLayout(QWidget):
             ref_start,
             cert_cc_start,
             cert_cnc_start,
+            cert_cp_start,
+            cert_cnp_start,
+            cert_ccon_start,
+            cert_cncon_start,
         )
         self._counter_init_worker.moveToThread(self._counter_init_thread)
 
@@ -187,18 +276,34 @@ class MainLayout(QWidget):
 
         self._counter_init_thread.start()
 
-    def _handle_counter_init_success(self, invoice_start: int, ref_start: int, cert_cc_start: int, cert_cnc_start: int):
+    def _handle_counter_init_success(
+        self,
+        invoice_start: int,
+        ref_start: int,
+        cert_cc_start: int,
+        cert_cnc_start: int,
+        cert_cp_start: int,
+        cert_cnp_start: int,
+        cert_ccon_start: int,
+        cert_cncon_start: int,
+    ):
         self._last_invoice_start = int(invoice_start)
         self._last_ref_start = int(ref_start)
         self._last_cert_cc_start = int(cert_cc_start)
         self._last_cert_cnc_start = int(cert_cnc_start)
+        self._last_cert_cp_start = int(cert_cp_start)
+        self._last_cert_cnp_start = int(cert_cnp_start)
+        self._last_cert_ccon_start = int(cert_ccon_start)
+        self._last_cert_cncon_start = int(cert_cncon_start)
         QMessageBox.information(
             self,
             "Initialisation réussie",
             (
                 f"Les prochains identifiants commenceront à {invoice_start} pour les factures, "
                 f"à {ref_start} pour Ref.b.analyse, à {cert_cc_start} pour les certificats CC "
-                f"et à {cert_cnc_start} pour les certificats CNC."
+                f"à {cert_cnc_start} pour les certificats CNC, à {cert_cp_start} pour les certificats CP, "
+                f"à {cert_cnp_start} pour les certificats CNP, à {cert_ccon_start} pour les certificats CCON "
+                f"et à {cert_cncon_start} pour les certificats CNCON."
             ),
         )
 

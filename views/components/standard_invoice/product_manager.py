@@ -722,10 +722,6 @@ class ProductManager(QWidget):
         )
         if analysis_duration_days is not None:
             self.product_analysis_durations[pid] = max(int(analysis_duration_days), 0)
-        if self.invoice_type == "standard" and not self.selected_products.get(pid, False):
-            num_act_widget = self.product_table.cellWidget(row, self._col("num_act"))
-            if num_act_widget is not None:
-                self._set_line_edit_text(num_act_widget, "")
         self.catalog_signature = self._safe_catalog_signature()
 
     def get_product_subtotal(self, product_id):
@@ -863,28 +859,6 @@ class ProductManager(QWidget):
 
         self._sync_visible_selected_num_acts()
         self.selected_num_acts[current_pid] = self._format_num_act_series(series)
-
-        seen_values = {}
-        for pid in self.selection_order:
-            if not self.selected_products.get(pid, False):
-                continue
-            designation_key = self._designation_key_for_pid(pid)
-            pid_quantity = self.selected_quantities.get(pid, self.product_default_quantities.get(pid, 1))
-            for item_num_act in self._normalize_num_act_series(self.selected_num_acts.get(pid), pid_quantity):
-                if not item_num_act:
-                    continue
-                previous_entry = seen_values.get(item_num_act)
-                if previous_entry and previous_entry["product_id"] != pid and previous_entry["designation_key"] != designation_key:
-                    QMessageBox.warning(
-                        self,
-                        "N° Acte déjà utilisé",
-                        f"Le N° Acte « {item_num_act} » est déjà utilisé par un autre produit dans cette facture.",
-                    )
-                    return False
-                seen_values[item_num_act] = {
-                    "product_id": pid,
-                    "designation_key": designation_key,
-                }
 
         return True
 

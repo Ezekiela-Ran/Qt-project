@@ -46,7 +46,7 @@ _HEADERS = [
     "Classe *",
     "Date de production",
     "Date de péremption",
-    "N° PRL",
+    "Sigle",
     "Date commerce",
     "Date cert *",
     "Actions",
@@ -266,7 +266,7 @@ class CertificateDialog(QDialog):
         classe_edit       = self._make_line_edit("Classe", 92)
         date_prod_edit   = self._make_date_edit()
         date_peremp_edit = self._make_date_edit()
-        num_prelev_edit  = self._make_line_edit("N° PRL", 88)
+        num_prelev_edit  = self._make_line_edit("Sigle", 88)
         date_pv_edit     = self._make_date_edit()
         date_cert_edit   = self._make_date_edit()
 
@@ -564,6 +564,38 @@ class CertificateDialog(QDialog):
 
     def _row_is_being_edited(self, row: dict) -> bool:
         return bool(row.get("loading")) or self._row_has_focus(row)
+
+    def _row_has_pending_input(self, row: dict) -> bool:
+        text_widgets = (
+            row["qty_edit"],
+            row["qty_analysee_edit"],
+            row["num_lot_edit"],
+            row["num_acte_edit"],
+            row["classe_edit"],
+            row["num_prelev_edit"],
+        )
+        if any(widget.text().strip() for widget in text_widgets):
+            return True
+        date_widgets = (
+            row["date_prod_edit"],
+            row["date_peremp_edit"],
+            row["date_pv_edit"],
+            row["date_cert_edit"],
+        )
+        return any(bool(widget.property("user_modified")) for widget in date_widgets)
+
+    def _persist_visible_rows_on_close(self):
+        for row in self._rows:
+            cert_type = self._selected_certificate_type(row)
+            if cert_type is None:
+                if self._row_has_pending_input(row):
+                    raise RuntimeError(
+                        f"Veuillez sélectionner CC ou CNC pour « {row['name']} » avant de fermer afin d'enregistrer les données saisies."
+                    )
+                continue
+
+            row["cached_entries"][cert_type] = self._snapshot_row_values(row, cert_type)
+            self._persist_row_state(row, cert_type)
 
     def _apply_remote_entry_to_row(self, row: dict, cert_type: str, payload: dict):
         row["cached_entries"][cert_type] = payload
@@ -961,6 +993,16 @@ class CertificateDialog(QDialog):
         )
 
     def closeEvent(self, event):
+        try:
+            self._persist_visible_rows_on_close()
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Enregistrement impossible",
+                f"Les données du formulaire certificat n'ont pas pu être enregistrées avant la fermeture.\n\n{exc}",
+            )
+            event.ignore()
+            return
         if hasattr(self, "refresh_timer"):
             self.refresh_timer.stop()
         super().closeEvent(event)
