@@ -178,7 +178,6 @@ class Tables:
                 toxico INT,
                 subtotal INT,
                 product_type_id INT NOT NULL,
-                UNIQUE KEY uk_products_num_act (num_act),
                 FOREIGN KEY (product_type_id)
                 REFERENCES product_type(id)
                 ON DELETE CASCADE
@@ -202,7 +201,6 @@ class Tables:
             FOREIGN KEY (product_type_id) REFERENCES product_type(id) ON DELETE CASCADE
         )
         """)
-        self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_products_num_act ON products(num_act)")
 
     def invoice_client_table(self):
         if self.is_mysql:
